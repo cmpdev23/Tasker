@@ -42,6 +42,7 @@ Every schedule requires a named timezone accepted by `Intl.DateTimeFormat`:
 | --- | --- | --- |
 | `manual` | timezone | — |
 | `once` | timezone, startsAt | — |
+| `hourly` | timezone | startsAt |
 | `daily` | timezone, time | startsAt |
 | `weekly` | timezone, time, days | startsAt |
 

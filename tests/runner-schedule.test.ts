@@ -5,6 +5,7 @@ import type { TaskDefinition } from "../src/types/tasks";
 
 type Schedule = TaskDefinition["schedule"];
 const daily: Schedule = { type: "daily", timezone: "America/Toronto", time: "07:00" };
+const hourly: Schedule = { type: "hourly", timezone: "America/Toronto" };
 function due(schedule: Schedule, after: string, now: string) {
   return latestDueOccurrence(schedule, new Date(after), new Date(now));
 }
@@ -18,6 +19,13 @@ test("once uses the explicit instant, with exclusive after and inclusive now", (
   assert.equal(due(schedule, "2026-09-09Z", "2026-09-10T10:59:59.999Z"), null);
   assert.equal(due(schedule, "2026-09-09Z", "2026-09-10T11:00:00Z"), "2026-09-10T11:00:00.000Z");
   assert.equal(due(schedule, "2026-09-10T11:00:00Z", "2026-09-11Z"), null);
+});
+
+test("hourly runs at the beginning of the latest local hour", () => {
+  assert.equal(due(hourly, "2026-09-10T14:59:59Z", "2026-09-10T15:45:00Z"), "2026-09-10T15:00:00.000Z");
+  assert.equal(due(hourly, "2026-09-10T15:00:00Z", "2026-09-10T15:59:59Z"), null);
+  assert.equal(due({ ...hourly, startsAt: "2026-09-10T15:00:01Z" }, "2026-09-10T14:00:00Z", "2026-09-10T15:45:00Z"), null);
+  assert.equal(due(hourly, "2026-11-01T04:00:00Z", "2026-11-01T06:45:00Z"), "2026-11-01T05:00:00.000Z");
 });
 
 test("daily returns only the latest missed occurrence after a long outage", () => {

@@ -69,6 +69,7 @@ test("all schedules round-trip and shared helpers still parse Git configuration"
   for (const schedule of [
     { type: "manual", timezone: "UTC" },
     { type: "once", timezone: "America/Toronto", startsAt: "2026-09-10T07:00:00-04:00" },
+    { type: "hourly", timezone: "America/Toronto", startsAt: "2026-09-10T07:00:00-04:00" },
     { type: "daily", timezone: "UTC", time: "00:00", startsAt: "2026-09-10T12:00Z" },
     { type: "weekly", timezone: "America/Toronto", time: "23:59", days: ["friday", "monday"], startsAt: "2026-09-10T12:00Z" },
   ]) {
@@ -87,6 +88,7 @@ test("strict input validation rejects invalid schedules, dates, fields and types
     input({ schedule: { type: "cron", timezone: "UTC" } }),
     input({ schedule: { type: "manual", timezone: "Not/A_Zone" } }),
     input({ schedule: { type: "manual", timezone: "UTC", time: "07:00" } }),
+    input({ schedule: { type: "hourly", timezone: "UTC", time: "07:00" } }),
     input({ schedule: { type: "once", timezone: "UTC" } }),
     input({ schedule: { type: "once", timezone: "UTC", startsAt: "2026-09-10T07:00" } }),
     input({ schedule: { type: "once", timezone: "UTC", startsAt: "2026-02-30T07:00Z" } }),

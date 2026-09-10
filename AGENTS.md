@@ -4,6 +4,40 @@ AgentTasker est une application locale et open source, conçue spécifiquement p
 
 La vision et le périmètre produit de référence se trouvent dans `AgentTasker_README.md`. Le nom du dépôt et du package (`CodexTasker` / `codex-tasker`) provient du squelette initial ; l’interface et les nouvelles fonctionnalités doivent adopter la marque **AgentTasker**, sauf décision explicite de migration technique.
 
+## Référence fonctionnelle : automatisation Linux v3
+
+`docs/v1/implantation-v3.md` décrit l'automatisation Linux qui fonctionnait
+avant AgentTasker. C'est la référence concrète que l'interface doit reproduire
+et généraliser; elle ne doit pas être confondue avec une dépendance de runtime
+ni avec la documentation de l'architecture actuelle. Lire ce document avant
+de modifier le runner, la queue, les worktrees, la validation, la finalisation
+Git ou l'intégration PR.
+
+Le système de référence exécutait, sur Linux et via un timer systemd, une
+automatisation de création d'articles :
+
+- une file de tâches JSON versionnée dans Git était sélectionnée depuis la
+  base distante fraîchement fetchée;
+- une branche distante jouait le rôle de réclamation atomique afin qu'une
+  tâche ne soit jamais prise deux fois;
+- chaque exécution utilisait un worktree éphémère, installait ses dépendances,
+  construisait un prompt, lançait `codex exec` avec timeout et exigeait une
+  sortie JSON conforme à un schéma;
+- le runner, et non l'agent, décidait du succès en vérifiant le code de sortie,
+  le schéma/résultat, un diff non vide composé uniquement de créations dans
+  l'allowlist, puis le build;
+- en succès comme en échec, l'état de la tâche était versionné et poussé; une
+  PR brouillon était créée, avec le travail partiel préservé en cas d'échec;
+- les logs par Run, les branches et les worktrees rendaient l'état récupérable;
+  un nettoyage ne supprimait que les worktrees propres et entièrement poussés.
+
+AgentTasker généralise ces règles : Tasks/Runs persistants plutôt que JSON de
+blogue, scheduler interne plutôt que systemd, validations et allowlists propres
+à chaque Task, et intégration Git/PR contrôlée par l'utilisateur. Les détails
+spécifiques de la référence (`CMT_*`, `cmpdev23/cmt`, chemins de contenu,
+cadence horaire, `npm run build`, `gpt-5.6-sol`) ne doivent jamais devenir des
+valeurs codées en dur dans le produit.
+
 ## Principes produit non négociables
 
 - **Local-first et multiplateforme :** pas de compte, SaaS ou plan de contrôle hébergé pour le MVP ; Windows, macOS et Linux sont ciblés.
@@ -12,6 +46,10 @@ La vision et le périmètre produit de référence se trouvent dans `AgentTasker
 - **Validation indépendante :** le statut de succès dépend notamment des codes de sortie, du diff Git et des commandes de validation configurées ; une déclaration de succès de l’agent est insuffisante.
 - **Contrôle humain de l’intégration :** l’auto-merge est désactivé par défaut. Le flux attendu est validation, commit, push optionnel, puis PR brouillon optionnelle et revue humaine.
 - **Traçabilité et récupération :** les Runs conservent événements, logs bruts, stderr, validations, diff, erreurs, branche et worktree afin de rendre chaque résultat compréhensible et récupérable.
+- **Réclamation sûre :** lorsqu'un Run est destiné à modifier/pousser une même
+  ressource qu'un autre Run, la sélection et la réclamation doivent empêcher
+  les doublons, y compris entre processus. Ne jamais déduire l'exclusivité
+  d'un état seulement local ou d'une déclaration de l'agent.
 
 ## Modèle produit cible
 
@@ -32,8 +70,8 @@ La vision et le périmètre produit de référence se trouvent dans `AgentTasker
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
 - SQLite/Drizzle, la gestion des Projects, l'initialisation `.tasker/`, les Instructions, les Settings Git et la tab Agents sont implémentés.
 - La tab Agents édite `.tasker/agents/main.toml` et les sous-agents TOML, avec découverte locale des modèles via `codex app-server` / `model/list`.
-- La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/daily/weekly, Run now, un Sheet live et l’historique.
-- Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée.
+- La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/hourly/daily/weekly, Run now, un Sheet live et l’historique.
+- Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée. Ils constituent la transposition UI du timer systemd et du runner unique de la référence Linux.
 - Le succès exige une sortie structurée positive et les contrôles Git ; le worker commit sans push/merge. Les échecs/annulations préservent le worktree. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
 
 ## Direction d’implémentation
@@ -46,7 +84,7 @@ Les premières entités durables sont `Project`, `Reference`, `Task`, `Run` et `
 
 ## Périmètre MVP
 
-Inclure : projets et détection Git locale, instructions et références de dépôt, création/édition de Tasks, exécution manuelle et récurrente, scheduler interne, queue et concurrence configurable, worktrees temporaires, exécution Codex, journaux live, annulation, validations, commit après succès, push/PR brouillon optionnels, historique des Runs, SQLite et récupération de base après échec.
+Inclure : projets et détection Git locale, instructions et références de dépôt, création/édition de Tasks, exécution manuelle et récurrente, scheduler interne, queue et concurrence configurable, worktrees temporaires, exécution Codex, journaux live, annulation, validations, commit après succès, push/PR brouillon optionnels, historique des Runs, SQLite et récupération de base après échec. Le comportement cible doit conserver les garanties du runner v3 documenté dans `docs/v1/implantation-v3.md`, en les rendant configurables par Project et Task.
 
 Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-machine, marketplace/plugins, vector DB/RAG, workflow builder visuel, auto-merge par défaut, nombreux fournisseurs d’agents et application mobile.
 

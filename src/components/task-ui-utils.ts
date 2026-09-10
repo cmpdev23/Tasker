@@ -51,7 +51,7 @@ export const WEEKDAYS = [
   ["thursday", "Jeudi"], ["friday", "Vendredi"], ["saturday", "Samedi"], ["sunday", "Dimanche"],
 ] as const;
 
-export const SCHEDULE_LABELS = { manual: "Manuelle", once: "Une seule fois", daily: "Chaque jour", weekly: "Chaque semaine" };
+export const SCHEDULE_LABELS = { manual: "Manuelle", once: "Une seule fois", hourly: "Chaque heure", daily: "Chaque jour", weekly: "Chaque semaine" };
 
 export function isActiveRun(status: string) {
   return ["QUEUED", "PREPARING", "RUNNING", "VALIDATING", "CLEANING_UP"].includes(status);

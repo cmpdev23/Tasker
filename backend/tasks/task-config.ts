@@ -56,7 +56,7 @@ export function validateTaskInput(input: unknown): TaskInput {
     throw new ValidationError("enabled and expectChanges must be booleans.");
   }
   const raw = object(data.schedule, "schedule", ["type", "timezone", "time", "days", "startsAt"]);
-  if (!["manual", "once", "daily", "weekly"].includes(raw.type as string)) {
+  if (!["manual", "once", "hourly", "daily", "weekly"].includes(raw.type as string)) {
     throw new ValidationError("Invalid schedule type.");
   }
   if (typeof raw.timezone !== "string" || !raw.timezone || raw.timezone !== raw.timezone.trim() || /^[+-]/.test(raw.timezone)) {

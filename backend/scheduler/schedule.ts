@@ -36,6 +36,12 @@ export function latestDueOccurrence(schedule: Schedule, after: Date, now: Date):
     return start > after && start <= now ? start.toISOString() : null;
   }
   const p = parts(now, schedule.timezone);
+  if (schedule.type === "hourly") {
+    const candidate = localOccurrence(`${p.year}-${p.month}-${p.day}`, `${p.hour}:00`, schedule.timezone);
+    if (candidate && candidate <= now && candidate > after &&
+      (!schedule.startsAt || candidate >= new Date(schedule.startsAt))) return candidate.toISOString();
+    return null;
+  }
   const day = new Date(`${p.year}-${p.month}-${p.day}T00:00:00Z`);
   for (let i = 0; i < 16; i++) {
     const candidateDay = new Date(day.getTime() - i * 86_400_000);

@@ -1,5 +1,44 @@
 # AgentTasker
 
+> Une interface locale pour généraliser une automatisation Codex/Git déjà
+> éprouvée sur Linux, sans en perdre les garanties opérationnelles.
+
+## Automatisation de référence
+
+AgentTasker est né de l'automatisation v3 de génération d'articles qui a été
+exploitée sur le serveur Linux *slushville*. Son guide d'implantation est la
+référence fonctionnelle et opérationnelle :
+[docs/v1/implantation-v3.md](docs/v1/implantation-v3.md).
+
+Cette automatisation ne se limitait pas à lancer Codex toutes les heures. Elle
+lisait une file versionnée dans Git, sélectionnait une tâche disponible,
+réclamait celle-ci de manière atomique sur une branche distante, puis lançait
+Codex dans un worktree éphémère. Le runner attendait le processus, validait
+indépendamment sa sortie structurée, le diff autorisé et le build, avant de
+committer, pousser et créer une PR brouillon. Les échecs conservaient un état
+diagnostiquable et une PR nécessitant l'intervention humaine.
+
+L'objectif d'AgentTasker est de rendre ce modèle accessible dans une UI et de
+le généraliser à différents dépôts et types de tâches, tout en préservant ses
+propriétés :
+
+| Automatisation Linux v3 | Généralisation dans AgentTasker |
+| --- | --- |
+| File JSON `pending/` d'articles | Tasks persistantes et Runs planifiés |
+| Timer systemd horaire | Scheduler interne, indépendant de l'OS |
+| Runner Python unique | Worker serveur et queue persistante |
+| Branche de réclamation distante | Branche/worktree isolé par Run et contrôles Git |
+| Allowlist des fichiers blog | Règles de diff et chemins autorisés par Task |
+| `npm run build` rejoué | Commandes de validation configurables |
+| `result.json` conforme à un schéma | Résultat Codex structuré et vérifié |
+| Push + PR brouillon, succès ou échec | Intégration Git optionnelle sous contrôle humain |
+| `RUN_DIR`, journal systemd et branches | Événements, logs, stderr, validations et récupération dans l'UI |
+
+Le guide v3 décrit une automatisation particulière du blogue; ses chemins,
+variables `CMT_*`, modèle, cadence et commandes ne sont donc pas des valeurs
+universelles d'AgentTasker. En revanche, son contrat d'exécution est la base
+à reproduire : le runner orchestre, l'agent travaille, et le runner vérifie.
+
 ## Running the current V1
 
 Install dependencies with `npm install`, then run `npm run dev` and open
@@ -8,27 +47,29 @@ Git with a configured commit identity, and an authenticated Codex CLI.
 SQLite migrations run automatically. See `.env.example` for optional local paths.
 
 Register a repository, initialize Tasker in Settings, select its remote base branch,
-configure the principal agent in Agents, then create a Task. Manual, once, daily
-and weekly schedules all use the same persisted queue and single worker.
+configure the principal agent in Agents, then create a Task. Manual, once, hourly,
+daily and weekly schedules all use the same persisted queue and single worker.
 The Tasks tab provides editing, deletion, Run now, live logs, cancellation and history.
 
 Runs use the latest remote base in an isolated worktree, verify Codex's structured
-result and Git changes, then create a local commit. No push or merge is performed.
-Failed and cancelled worktrees are retained. The application must remain running
-for scheduling; closing the browser does not stop execution.
+result and Git changes, then create a local commit. No push or merge is performed
+in the current V1. Failed and cancelled worktrees are retained. The application
+must remain running for scheduling; closing the browser does not stop execution.
 
 Quality commands: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
 Use a Node version compatible with the installed `better-sqlite3` native binary.
 Production runs with `npm run start -- --hostname 127.0.0.1 --port 5000` after building.
 
-Architecture: [Task runner](docs/task-runner-architecture.md),
+Architecture: [Linux automation reference](docs/v1/implantation-v3.md),
+[Task runner](docs/task-runner-architecture.md),
 [Task configuration](docs/task-configuration.md),
 [Persistence](docs/tasker-persistence-architecture.md),
 [Git isolation](docs/git-worktree-architecture.md),
 [Codex agents](docs/codex-agent-configuration.md).
 
-The sections below describe the broader product vision; optional push/PR,
-configurable validation commands and custom subagent orchestration remain future work.
+The sections below describe the broader product vision. In particular, the
+reference workflow's configurable validation commands, push/PR finalization
+and custom subagent orchestration remain future work in the UI.
 
 
 > A local, open-source task orchestrator for coding agents.
@@ -47,7 +88,8 @@ agenttasker
 http://localhost:<port>
 ```
 
-The goal is not merely to put a UI around `codex exec`. AgentTasker
+The goal is to reproduce and generalize the Linux runner's operational
+contract in a UI, not merely to put a UI around `codex exec`. AgentTasker
 provides the orchestration layer around the agent: projects, reusable
 instructions, repository-based knowledge, tasks, scheduling, queues,
 isolated Git worktrees, live monitoring, deterministic validation, Git

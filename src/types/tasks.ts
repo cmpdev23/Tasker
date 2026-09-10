@@ -6,7 +6,7 @@ export interface TaskDefinition {
   instructions: string;
   expectChanges: boolean;
   schedule: {
-    type: "manual" | "once" | "daily" | "weekly";
+    type: "manual" | "once" | "hourly" | "daily" | "weekly";
     timezone: string;
     time?: string;
     days?: string[];

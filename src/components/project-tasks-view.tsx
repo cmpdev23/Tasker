@@ -17,6 +17,7 @@ function scheduleLabel(task: TaskDefinition) {
   const { type, startsAt, time, timezone, days } = task.schedule;
   if (type === "manual") return "Manuelle";
   if (type === "once") return `${formatRunDate(startsAt, timezone)} · ${timezone}`;
+  if (type === "hourly") return `Chaque heure · ${timezone}`;
   const frequency = type === "daily" ? SCHEDULE_LABELS.daily : WEEKDAYS.filter(([day]) => days?.includes(day)).map(([, label]) => label.slice(0, 3)).join(", ");
   return `${frequency} à ${time} · ${timezone}`;
 }

@@ -49,8 +49,9 @@ pendant le build. Aucun cron, service externe ou ordonnanceur OS n’est créé.
 Le service est conservé dans `globalThis` lors du rechargement des modules.
 
 Le scheduler vérifie toutes les deux secondes les tâches actives. `manual` ne
-produit aucune occurrence ; `once` utilise un instant ISO ; `daily` et `weekly`
-utilisent une heure locale et un fuseau IANA. L’interface n’expose pas de cron.
+produit aucune occurrence ; `once` utilise un instant ISO ; `hourly` démarre au
+début de chaque heure locale ; `daily` et `weekly` utilisent une heure locale et
+un fuseau IANA. L’interface n’expose pas de cron.
 
 À la première découverte ou après changement de planning/réactivation, une
 récurrence commence à la prochaine occurrence. Une tâche `once` déjà échue est
