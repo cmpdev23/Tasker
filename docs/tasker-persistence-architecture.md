@@ -179,6 +179,9 @@ Initial structure:
 .tasker/
 ├── project.toml
 ├── instructions.md
+├── agents/
+│   ├── main.toml
+│   └── <subagent-id>.toml
 └── tasks/
     └── <task-id>/
         ├── task.toml
@@ -215,12 +218,6 @@ name = "Comparer Mon Taux"
 [git]
 base_branch = "main"
 
-[agent]
-provider = "codex"
-model = "gpt-5.6-sol"
-reasoning_effort = "high"
-network_access = true
-
 [execution]
 default_timeout_minutes = 180
 preserve_failed_worktree = true
@@ -232,6 +229,11 @@ embedding large prompts inside TOML:
 ``` toml
 instructions = "instructions.md"
 ```
+
+La configuration Codex principale vit dans `.tasker/agents/main.toml` et les
+sous-agents personnalisés dans `.tasker/agents/<subagent-id>.toml`. Les clés
+reprennent directement le schéma natif de Codex; voir
+`docs/codex-agent-configuration.md`.
 
 This keeps prompts easy to read, edit, diff, and review.
 
@@ -497,7 +499,7 @@ inside `.tasker/`.
 
 Credentials should use an appropriate local mechanism such as:
 
--   the agent/provider's existing authentication;
+-   l'authentification existante de Codex;
 -   environment variables;
 -   OS credential storage;
 -   another secure local credential mechanism.

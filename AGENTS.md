@@ -1,6 +1,6 @@
 # AgentTasker
 
-AgentTasker est une application locale et open source qui orchestre des tâches de développement autonome contre des dépôts Git locaux. Le premier agent pris en charge est OpenAI Codex, mais le cœur doit rester découplé d’un fournisseur donné.
+AgentTasker est une application locale et open source, conçue spécifiquement pour orchestrer OpenAI Codex contre des dépôts Git locaux. Le MVP n'est pas une plateforme multi-provider et ne doit pas introduire d'abstraction générique de fournisseur.
 
 La vision et le périmètre produit de référence se trouvent dans `AgentTasker_README.md`. Le nom du dépôt et du package (`CodexTasker` / `codex-tasker`) provient du squelette initial ; l’interface et les nouvelles fonctionnalités doivent adopter la marque **AgentTasker**, sauf décision explicite de migration technique.
 
@@ -30,13 +30,15 @@ La vision et le périmètre produit de référence se trouvent dans `AgentTasker
 - `src/components/blocks/app-shell-3/` contient l’App Shell et sa navigation latérale persistante.
 - `src/components/ui/` contient les primitives shadcn ; `src/components/reui/` contient les primitives ReUI.
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
-- Aucune couche d’orchestration, persistance, scheduler, worktree runner ou intégration Codex n’est encore implémentée. Le projet est au stade définition produit / pré-implémentation du MVP.
+- SQLite/Drizzle, la gestion des Projects, l'initialisation `.tasker/`, les Instructions, les Settings Git et la tab Agents sont implémentés.
+- La tab Agents édite `.tasker/agents/main.toml` et les sous-agents TOML, avec découverte locale des modèles via `codex app-server` / `model/list`.
+- Aucune couche scheduler, queue, worker, worktree runner ou exécution Codex n’est encore implémentée.
 
 ## Direction d’implémentation
 
-La direction technique du MVP est TypeScript/Node.js, Next.js/React, shadcn/ui, SQLite et Drizzle ORM, avec Git CLI, Codex CLI et/ou SDK, et GitHub CLI/API seulement lorsque l’intégration GitHub est activée.
+La direction technique du MVP est TypeScript/Node.js, Next.js/React, shadcn/ui, SQLite et Drizzle ORM, avec Git CLI, Codex CLI/app-server et/ou SDK, et GitHub CLI/API seulement lorsque l’intégration GitHub est activée.
 
-Prévoir une abstraction `AgentProvider` avec au minimum `run()`, `cancel()`, `capabilities()` et `events()`. `CodexProvider` est la première implémentation ; n’ajoutez pas d’autres fournisseurs dans le MVP sans besoin explicite.
+L'intégration d'agent doit être spécifique à Codex et refléter sa configuration native. Ne pas créer d'interface `AgentProvider`, de dropdown de fournisseur ou d'architecture anticipant Claude, Gemini ou d'autres agents.
 
 Les premières entités durables sont `Project`, `Reference`, `Task`, `Run` et `RunEvent`. Les paramètres agent et exécution de projet peuvent être surchargés par Task. Conserver dans un Run les horodatages, configuration résolue, worktree, branche, code de sortie, résultat, erreur, commit et URL de PR lorsque pertinents.
 
@@ -69,7 +71,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 ## Prochaines étapes
 
 1. Valider le modèle Project / Task / Run et la persistance SQLite/Drizzle.
-2. Construire le runner local avec queue, workers, worktrees et `CodexProvider`.
+2. Construire le runner local avec queue, workers, worktrees et intégration Codex native.
 3. Ajouter les validations déterministes, le suivi live, l’annulation et l’historique.
 4. Ajouter les opérations Git contrôlées : commit, push et PR brouillon optionnelle.
 

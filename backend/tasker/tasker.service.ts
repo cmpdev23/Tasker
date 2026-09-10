@@ -3,6 +3,10 @@ import path from "node:path";
 import { gitService } from "../git/git.service";
 import { projectService } from "../projects/project.service";
 import { ValidationError, ConflictError } from "../errors";
+import {
+  DEFAULT_MAIN_CODEX_CONFIG,
+  serializeMainCodexConfig,
+} from "./agents.service";
 
 export interface InitTaskerOptions {
   repoPath: string;
@@ -72,6 +76,13 @@ base_branch = "${baseBranch.trim()}"
 
     // Create .tasker/instructions.md
     fs.writeFileSync(path.join(taskerDir, "instructions.md"), DEFAULT_INSTRUCTIONS, "utf-8");
+
+    // Create the versioned Codex defaults used by future project Tasks.
+    fs.writeFileSync(
+      path.join(taskerDir, "agents", "main.toml"),
+      serializeMainCodexConfig(DEFAULT_MAIN_CODEX_CONFIG),
+      "utf-8"
+    );
   }
 
   async getProjectInstructions(projectId: string): Promise<{ instructions: string; filePath: string }> {

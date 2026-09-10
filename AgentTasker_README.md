@@ -4,8 +4,8 @@
 
 AgentTasker is a local application for creating, scheduling, executing,
 monitoring, and validating autonomous coding tasks against local Git
-repositories. The first supported agent is OpenAI Codex, while the
-architecture should avoid unnecessary coupling to a single provider.
+repositories. AgentTasker is designed specifically for OpenAI Codex and does
+not expose a generic multi-provider layer.
 
 The application runs locally on Windows, macOS, and Linux and exposes a
 web UI on localhost.
@@ -160,7 +160,7 @@ It can be detected with Git, for example via
 
 ### Agent defaults
 
-A project may define defaults such as provider, model, reasoning effort,
+A project may define native Codex defaults such as model, reasoning effort,
 network access, sandbox behavior, and timeout. Individual tasks may
 override these defaults.
 
@@ -476,24 +476,12 @@ npx agenttasker
 
 which starts the local service and prints its localhost URL.
 
-## 18. Agent provider abstraction
+## 18. Native Codex integration
 
-Codex is the first supported agent. The core should nevertheless avoid
-scattering Codex-specific behavior throughout the application.
-
-Conceptually:
-
-```text
-AgentProvider
-├── run()
-├── cancel()
-├── capabilities()
-└── events()
-```
-
-The initial implementation is `CodexProvider`. Supporting additional
-providers is not required for the MVP; the abstraction exists to avoid
-an architectural dead end.
+AgentTasker targets OpenAI Codex directly. Project-level agent configuration
+uses Codex-native keys under `.tasker/agents/`, and the local model catalog is
+read through the official app-server `model/list` method. The MVP does not
+define an `AgentProvider` abstraction or a provider selector.
 
 ## 19. Initial data model
 
