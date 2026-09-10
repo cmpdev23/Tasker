@@ -23,7 +23,8 @@ import { HouseIcon } from "lucide-react"
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const pathname = usePathname()
-  const isCmt = pathname === "/cmt"
+  const isHome = pathname === "/"
+  const currentSlug = !isHome ? pathname.split("/").filter(Boolean)[0] : null
 
   return (
     <SidebarProvider
@@ -66,7 +67,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
                 <BreadcrumbSeparator className="hidden items-center md:flex">
                   <BulletSeparator />
                 </BreadcrumbSeparator>
-                {isCmt ? (
+                {currentSlug ? (
                   <>
                     <BreadcrumbItem className="hidden items-center md:flex">
                       <span>Projects</span>
@@ -75,7 +76,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
                       <BulletSeparator />
                     </BreadcrumbSeparator>
                     <BreadcrumbItem>
-                      <BreadcrumbPage>cmt</BreadcrumbPage>
+                      <BreadcrumbPage>{currentSlug}</BreadcrumbPage>
                     </BreadcrumbItem>
                   </>
                 ) : (

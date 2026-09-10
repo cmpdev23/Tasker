@@ -1,19 +1,22 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 
 import { cn } from "@/lib/utils"
 import {
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { ACTIVE_PROJECTS, type Project } from "./data"
 import { ItemActionMenu } from "./item-action-menu"
-import { ChevronDownIcon } from "lucide-react"
+import { ChevronDownIcon, PlusIcon } from "lucide-react"
+import { useProjects, type ProjectItem as ProjectType } from "@/contexts/projects-context"
+import { CreateProjectDialog } from "@/components/create-project-dialog"
 
 const RADIUS = 6
 const CX = 8
@@ -55,31 +58,48 @@ function PieProgress({ progress, color }: { progress: number; color: string }) {
   )
 }
 
-// ── Project Item ──
-
-function ProjectItem({ project }: { project: Project }) {
+function ProjectItem({ project }: { project: ProjectType }) {
   return (
     <SidebarMenuItem>
-      {/* Sidebar */}
       <SidebarMenuButton
-        tooltip={`${project.name} · ${project.progress}% complete`}
-        render={<a href="#" />}
+        tooltip={project.name}
+        render={<Link href={`/${project.slug}`} />}
       >
-        <PieProgress progress={project.progress} color={project.color} />
+        <PieProgress progress={100} color="stroke-primary" />
         <span className="min-w-0 truncate">{project.name}</span>
       </SidebarMenuButton>
-      {/* Row */}
       <ItemActionMenu label={project.name} />
     </SidebarMenuItem>
   )
 }
 
 function ProjectList() {
+  const { projects, isLoading } = useProjects()
+
+  if (isLoading && projects.length === 0) {
+    return (
+      <SidebarGroupContent id="active-projects-list">
+        <div className="px-2 py-1.5 text-xs text-muted-foreground">
+          Loading projects...
+        </div>
+      </SidebarGroupContent>
+    )
+  }
+
+  if (projects.length === 0) {
+    return (
+      <SidebarGroupContent id="active-projects-list">
+        <div className="px-2 py-1.5 text-xs text-muted-foreground">
+          No projects yet
+        </div>
+      </SidebarGroupContent>
+    )
+  }
+
   return (
     <SidebarGroupContent id="active-projects-list">
-      {/* Sidebar */}
       <SidebarMenu className="gap-0.25">
-        {ACTIVE_PROJECTS.map((project) => (
+        {projects.map((project) => (
           <ProjectItem key={project.id} project={project} />
         ))}
       </SidebarMenu>
@@ -89,28 +109,48 @@ function ProjectList() {
 
 export function NavProjects() {
   const [open, setOpen] = useState(true)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
   return (
-    <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-      {/* Sidebar */}
-      <SidebarGroupLabel
-        render={
-          <button
-            onClick={() => setOpen((prev) => !prev)}
-            aria-expanded={open}
-            aria-controls="active-projects-list"
+    <>
+      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroupLabel
+          render={
+            <button
+              type="button"
+              onClick={() => setOpen((prev) => !prev)}
+              aria-expanded={open}
+              aria-controls="active-projects-list"
+            />
+          }
+          className="focus-visible:ring-sidebar-ring w-full cursor-pointer whitespace-nowrap focus-visible:ring-2 focus-visible:outline-none"
+        >
+          Active Projects
+          <ChevronDownIcon
+            className={cn(
+              "ml-auto size-4 shrink-0 opacity-60 transition-transform duration-200",
+              !open && "-rotate-90"
+            )}
+            aria-hidden="true"
           />
-        }
-        className="focus-visible:ring-sidebar-ring w-full cursor-pointer whitespace-nowrap focus-visible:ring-2 focus-visible:outline-none"
-      >
-        Active Projects
-        <ChevronDownIcon className={cn(
-                          "ml-auto size-4 shrink-0 opacity-60 transition-transform duration-200",
-                          !open && "-rotate-90"
-                        )} aria-hidden="true" />
-      </SidebarGroupLabel>
+        </SidebarGroupLabel>
 
-      {open && <ProjectList />}
-    </SidebarGroup>
+        <SidebarGroupAction
+          onClick={() => setCreateDialogOpen(true)}
+          title="Create project"
+          aria-label="Create project"
+        >
+          <PlusIcon />
+          <span className="sr-only">Create project</span>
+        </SidebarGroupAction>
+
+        {open && <ProjectList />}
+      </SidebarGroup>
+
+      <CreateProjectDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+      />
+    </>
   )
 }

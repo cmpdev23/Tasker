@@ -72,9 +72,7 @@ export const NAV_MAIN: NavItem[] = [
     icon: (
       <FolderIcon aria-hidden="true" />
     ),
-    children: [
-      { id: "cmt", label: "cmt", url: "/cmt" },
-    ],
+    children: [],
   },
   {
     id: "tasks",
