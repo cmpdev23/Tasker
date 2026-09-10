@@ -27,13 +27,15 @@ responsable de chaque transition ; le navigateur observe et contrôle.
 - `.tasker/instructions.md` : instructions de projet.
 - `.tasker/agents/main.toml` : configuration native de Codex.
 - `.tasker/project.toml` : `[git].base_branch`, `[git].remote` optionnel
-  (défaut `origin`) et `[execution].default_timeout_minutes` optionnel (défaut 180).
+  (défaut `origin`) et les réglages `[execution]` de préparation, validation et
+  délais. Les anciens projets sans cette table reçoivent les valeurs sûres par défaut.
 - SQLite : `runs`, `run_events`, `scheduler_state`, `runner_lock`. Les migrations
   Drizzle sont appliquées au démarrage ; leur échec bloque l’ouverture de la base.
 
 La définition et les instructions ne sont pas recopiées en base. Un Run conserve
-le nom historique, les réglages agent résolus, les coordonnées Git, les timestamps,
-PID, code de sortie, résultat final, diff et erreur. Les instructions et réglages
+le nom historique, les réglages agent et d’exécution résolus, les coordonnées Git,
+les timestamps, le PID du sous-processus actif, le code de sortie, le résultat final,
+le diff et l’erreur. Les instructions et réglages
 sont lus au démarrage effectif du worker, pas au clic de mise en file. Les éditer
 pendant l’attente affecte donc les Runs encore en file. Les réglages déjà chargés
 restent stables pour le Run courant. L’historique contient naturellement les sorties
@@ -125,16 +127,32 @@ même avec un code de sortie zéro. La référence officielle utilisée est le
 `FAILED` ou `CANCELLED`. Les opérations longues appartiennent au worker, pas aux API.
 `POST .../tasks/<id>/runs` renvoie immédiatement le Run et HTTP 202.
 
-stdout brut, stderr, JSON Codex, événements de statut et résultat sont persistés
+stdout brut, stderr, sorties des commandes gérées, JSON Codex, événements de statut et résultat sont persistés
 dans SQLite. Le Sheet consulte `GET .../runs/<id>?after=<event-id>` toutes les 1,5 s
 et draine les pages de 500 événements, même après la fin. La liste consulte toutes
 les trois secondes. Ce polling reprend simplement après déconnexion sans maintenir
 de flux HTTP ; les logs demeurent consultables après fermeture du navigateur.
 L’historique est paginé par 200 Runs avec un curseur `before`.
 
-Le Sheet affiche le modèle, le sandbox, la politique d’approbation et le réglage
-réseau `workspace-write` depuis le snapshot JSON `resolvedConfig` du Run. Une
-valeur absente ou invalide reste explicitement non renseignée. Lorsque
+Le Sheet agit comme un Run Inspector. Il normalise les événements JSONL en une
+timeline humaine, regroupe les cycles `item.started`/`updated`/`completed`, puis
+utilise un renderer spécialisé pour les messages, reasoning, commandes, fichiers,
+outils, recherches, plans, sous-agents et erreurs. Les événements bruts restent
+disponibles dans une section technique chargée à la demande. Voir
+[le contrat des événements Codex](codex-run-events.md).
+
+Un Run `FAILED` expose l’action **Réexécuter** dans la ligne de Task, son entrée
+d’historique et le Run Inspector. Cette action crée un nouveau Run manuel dans la
+queue; elle ne modifie ni ne supprime le Run échoué. Le worker repart de la base
+distante actuelle et relit la définition de Task, les Instructions, l’agent et les
+Settings d’exécution actuels. Le worktree échoué reste donc disponible pour audit,
+mais n’est pas repris comme workspace du nouveau Run. Une Task supprimée ne peut
+pas être réexécutée depuis son historique conservé.
+
+Le header affiche de façon compacte le modèle, le reasoning, le sandbox et le
+réglage réseau `workspace-write` depuis le snapshot JSON `resolvedConfig` du Run.
+Les autres valeurs sont dans les détails repliables. Une valeur absente ou
+invalide reste explicitement non renseignée. Lorsque
 `terminationVerified` vaut `false`, un avertissement de file bloquée et de
 récupération locale reste visible ; le polling continue jusqu’à la levée du blocage.
 
@@ -147,8 +165,37 @@ supprime aussi son historique via les relations SQLite en cascade.
 
 ## Validation et finalisation
 
-Le succès requiert : sortie Codex zéro, résultat structuré valide et positif,
-absence d’annulation/timeout, intégrité du worktree et de sa branche. Si
+Les Settings du Project éditent cette table versionnée :
+
+```toml
+[execution]
+default_timeout_minutes = 180
+package_manager = "npm"
+install_dependencies = false
+install_timeout_minutes = 15
+validation_scripts = []
+validation_timeout_minutes = 20
+```
+
+`package_manager` accepte `npm`, `pnpm`, `yarn` ou `bun`. L’installation est une
+action explicite et désactivée par défaut, car elle peut accéder au réseau et lancer
+les scripts de cycle de vie du dépôt. Lorsqu’elle est activée, le worker lance dans
+le worktree, avant Codex, `npm ci`, `pnpm install --frozen-lockfile`,
+`yarn install --immutable` ou `bun install --frozen-lockfile`. Node est injecté dans
+le `PATH` du sous-processus depuis le runtime qui exécute AgentTasker; son chemin
+absolu reste une donnée de machine et n’est jamais écrit dans `.tasker/`.
+
+`validation_scripts` contient uniquement des noms de scripts `package.json`, pas
+des commandes shell arbitraires. Le worker exécute chaque entrée en ordre avec
+`<package_manager> run <script>` après la sortie positive de Codex et avant le
+commit. Un échec, une annulation ou un délai dépassé interrompt la chaîne. stdout,
+stderr, début, fin et terminaison sont persistés dans les événements du Run. Les
+réglages résolus sont également figés dans le snapshot du Run et visibles dans son
+inspecteur. Les futurs overrides par Task ne sont pas encore implémentés.
+
+Le succès requiert : préparation réussie lorsqu’elle est activée, sortie Codex
+zéro, résultat structuré valide et positif, toutes les validations configurées
+réussies, absence d’annulation/timeout, intégrité du worktree et de sa branche. Si
 `expect_changes = true` (défaut du formulaire), un diff réel est obligatoire.
 Pour une tâche d’analyse sans modification, désactiver cette option.
 
@@ -157,8 +204,6 @@ un échec contrôlé et une conservation du travail. Le worker stage les changem
 réels, crée `task(<task-id>): run <uuid>`, puis vérifie parent, arbre et propreté.
 L’identité Git doit être configurée sur la machine ou dans le dépôt. Un problème
 de commit conserve les modifications. Aucun push, PR ou merge n’est effectué.
-La V1 n’installe pas automatiquement les dépendances du projet et ne lance pas
-encore de commandes de validation configurables.
 
 ## Annulation, arrêt et récupération
 
@@ -169,12 +214,14 @@ POSIX utilise un groupe de processus ; Windows conserve les identités PID/date 
 création des descendants via Toolhelp, tente `taskkill`, puis vérifie leur arrêt.
 L’état terminal est écrit après la fin du processus. Les logs restent disponibles.
 
-Le timeout de trois heures suit le même arrêt et produit `FAILED`. L’arrêt normal
+Le délai du Run, de 180 minutes par défaut et configurable entre 1 et 1 440 minutes,
+suit le même arrêt et produit `FAILED`. Les commandes de préparation et de validation
+ont leurs propres délais configurables entre 1 et 120 minutes. L’arrêt normal
 du serveur attend le tick actif et la terminaison de son worker avant de libérer
 son verrou. Après une mort brutale, les anciens Runs actifs sans processus vivant
 sont marqués échoués, en préservant branche, fichiers et événements.
 
-Si l’ancien PID Codex est encore vivant, la queue reste suspendue jusqu’à sa
+Si l’ancien PID du sous-processus actif est encore vivant, la queue reste suspendue jusqu’à sa
 disparition : aucun PID hérité n’est tué aveuglément. Si la terminaison des
 descendants n’a pas pu être vérifiée, `termination_verified = 0` bloque durablement
 la queue, y compris après redémarrage. Une intervention locale doit vérifier et
@@ -197,8 +244,9 @@ succès à nettoyer manuellement. Les branches de Run sont toujours conservées.
 ## Tests et limites V1
 
 `npm test` couvre le CRUD filesystem, les horaires/fuseaux/DST, transactions,
-concurrence, événements, redémarrage, Git réel avec remote local jetable et arrêt
-de véritables arbres de processus de test. Ces tests n’utilisent pas de modèle.
+concurrence, événements, redémarrage, parsing des réglages d’exécution, résolution
+des commandes de paquets, Git réel avec remote local jetable et arrêt de véritables
+arbres de processus de test. Ces tests n’utilisent pas de modèle.
 
 Les scripts `prepare-real-run-smoke.mjs`, `start-smoke-server.mjs` et
 `real-run-browser-smoke.mjs` permettent un test réel volontaire avec
@@ -214,8 +262,8 @@ fichier de test, SUCCESS et commit automatique, sans modifier le checkout princi
 `real-run-cancel-smoke.mjs` a ensuite confirmé l’annulation d’un véritable processus
 Codex depuis le Sheet, avec terminaison vérifiée et worktree conservé.
 Le redémarrage en production a conservé la Task et les 61 événements du Run réussi.
-La validation finale comprend 55 tests réussis, un test de symlink ignoré faute de
-privilèges Windows, TypeScript, ESLint et le build de production sans avertissement.
+La validation finale comprend 67 tests réussis, un test de symlink ignoré faute de
+privilèges Windows, TypeScript, ESLint et le build de production Turbopack réussi.
 Une seconde exécution réelle réussie a vérifié le contrôle renforcé des descendants
 après sortie normale de Codex, avec terminaison vérifiée et nettoyage du worktree.
 

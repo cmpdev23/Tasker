@@ -47,12 +47,16 @@ Git with a configured commit identity, and an authenticated Codex CLI.
 SQLite migrations run automatically. See `.env.example` for optional local paths.
 
 Register a repository, initialize Tasker in Settings, select its remote base branch,
+configure dependency installation and package validation scripts in Settings,
 configure the principal agent in Agents, then create a Task. Manual, once, hourly,
 daily and weekly schedules all use the same persisted queue and single worker.
-The Tasks tab provides editing, deletion, Run now, live logs, cancellation and history.
+The Tasks tab provides editing, deletion, Run now, rerun of failed Tasks, live logs,
+cancellation and history. A rerun creates a new queued Run from the current Task and
+Project settings while preserving the failed Run and its worktree.
 
-Runs use the latest remote base in an isolated worktree, verify Codex's structured
-result and Git changes, then create a local commit. No push or merge is performed
+Runs use the latest remote base in an isolated worktree, optionally install locked
+dependencies, verify Codex's structured result, execute the configured package
+scripts and validate Git changes, then create a local commit. No push or merge is performed
 in the current V1. Failed and cancelled worktrees are retained. The application
 must remain running for scheduling; closing the browser does not stop execution.
 
@@ -67,9 +71,9 @@ Architecture: [Linux automation reference](docs/v1/implantation-v3.md),
 [Git isolation](docs/git-worktree-architecture.md),
 [Codex agents](docs/codex-agent-configuration.md).
 
-The sections below describe the broader product vision. In particular, the
-reference workflow's configurable validation commands, push/PR finalization
-and custom subagent orchestration remain future work in the UI.
+The sections below describe the broader product vision. Push/PR finalization,
+per-Task validation overrides and custom subagent orchestration remain future
+work in the UI.
 
 
 > A local, open-source task orchestrator for coding agents.
@@ -241,6 +245,12 @@ override these defaults.
 
 Possible project defaults include worktree location, cleanup behavior,
 and whether failed work should be preserved.
+
+The current V1 exposes the package manager, optional locked dependency
+installation, ordered `package.json` validation scripts, and separate Run,
+installation, and validation timeouts. These portable settings are stored under
+`[execution]` in `.tasker/project.toml`; executable paths remain local to the
+machine and are only reported by the Settings preflight.
 
 ## 6. Instructions and Knowledge
 
@@ -429,6 +439,10 @@ Execute Run
 Manual `Run now` executions use the same queue. Global settings control
 maximum concurrent runs so multiple expensive agents do not launch
 unexpectedly.
+
+Rerunning a failed Task creates another manual Run from the current Task and
+Project configuration. The failed Run, logs, branch and worktree remain intact;
+the new Run starts from the current remote base rather than resuming that worktree.
 
 ## 12. Git worktree lifecycle
 
@@ -644,6 +658,7 @@ rawPayload
 - repository-based references;
 - task creation/editing;
 - manual `Run now`;
+- rerun of failed Tasks as a new queued Run;
 - recurring scheduling;
 - internal scheduler;
 - execution queue;

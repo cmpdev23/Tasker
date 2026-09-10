@@ -22,7 +22,7 @@ async function fixture(t: TestContext) {
     const target = path.resolve(root);
     assert.equal(path.dirname(target), path.resolve(os.tmpdir()));
     assert.ok(path.basename(target).startsWith("agenttasker-codex-test-"));
-    await fs.rm(target, { recursive: true, force: true });
+    await fs.rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   const schema = path.join(root, "result.schema.json");
   await fs.writeFile(schema, JSON.stringify(CODEX_RUN_OUTPUT_SCHEMA));

@@ -7,6 +7,12 @@ import {
   DEFAULT_MAIN_CODEX_CONFIG,
   serializeMainCodexConfig,
 } from "./agents.service";
+import {
+  parseProjectExecutionSettings,
+  serializeDefaultExecutionSection,
+  updateProjectExecutionToml,
+} from "./project-execution";
+import type { ProjectExecutionSettings } from "../../src/types/project-execution";
 
 export interface InitTaskerOptions {
   repoPath: string;
@@ -71,6 +77,8 @@ name = "${projectName.trim()}"
 
 [git]
 base_branch = "${baseBranch.trim()}"
+
+${serializeDefaultExecutionSection()}
 `;
     fs.writeFileSync(path.join(taskerDir, "project.toml"), projectTomlContent, "utf-8");
 
@@ -184,6 +192,60 @@ base_branch = "${baseBranch.trim()}"
     } catch {
       return false;
     }
+  }
+
+  async getProjectExecutionSettings(projectId: string): Promise<{
+    settings: ProjectExecutionSettings;
+    filePath: string;
+  }> {
+    const projectTomlPath = await this.resolveProjectToml(projectId);
+    return {
+      settings: parseProjectExecutionSettings(fs.readFileSync(projectTomlPath, "utf-8")),
+      filePath: ".tasker/project.toml",
+    };
+  }
+
+  async updateProjectExecutionSettings(projectId: string, input: unknown): Promise<{
+    settings: ProjectExecutionSettings;
+    filePath: string;
+  }> {
+    const projectTomlPath = await this.resolveProjectToml(projectId);
+    const current = fs.readFileSync(projectTomlPath, "utf-8");
+    const next = updateProjectExecutionToml(current, input);
+    const tempPath = `${projectTomlPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tempPath, next, { encoding: "utf-8", flag: "wx" });
+      fs.renameSync(tempPath, projectTomlPath);
+    } finally {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    }
+    return {
+      settings: parseProjectExecutionSettings(next),
+      filePath: ".tasker/project.toml",
+    };
+  }
+
+  private async resolveProjectToml(projectId: string): Promise<string> {
+    const project = await projectService.getProjectById(projectId);
+    if (!project.repositoryPath?.trim()) {
+      throw new ValidationError("NO_REPOSITORY: Configure the project repository in Settings first.");
+    }
+    const repository = fs.realpathSync(path.resolve(project.repositoryPath.trim()));
+    const taskerDirectory = path.join(repository, ".tasker");
+    if (!fs.existsSync(taskerDirectory) || !fs.statSync(taskerDirectory).isDirectory()) {
+      throw new ValidationError("NOT_INITIALIZED: Initialize Tasker in Settings first.");
+    }
+    const taskerReal = fs.realpathSync(taskerDirectory);
+    if (path.relative(repository, taskerReal).startsWith("..") || fs.lstatSync(taskerDirectory).isSymbolicLink()) {
+      throw new ValidationError("Unsafe .tasker directory.");
+    }
+    const projectTomlPath = path.join(taskerReal, "project.toml");
+    if (!fs.existsSync(projectTomlPath)) throw new ValidationError("Missing .tasker/project.toml.");
+    const info = fs.lstatSync(projectTomlPath);
+    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) {
+      throw new ValidationError("Unsafe .tasker/project.toml file.");
+    }
+    return projectTomlPath;
   }
 }
 

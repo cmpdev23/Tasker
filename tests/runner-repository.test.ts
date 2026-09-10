@@ -67,6 +67,25 @@ test("queued cancellation persists immediately, excludes the run from claims, an
   assert.equal(fixture.runRepository.get(project.id, active.id).cancelRequested, true);
 });
 
+test("manual recovery only releases a terminal run with no remaining process identity", async () => {
+  const project = await fixture.project();
+  const recoverable = fixture.runRepository.create(project.id, "recoverable", "Recoverable run");
+  fixture.runRepository.update(recoverable.id, { status: "FAILED", terminationVerified: false, codexPid: null });
+
+  const recovered = fixture.runService.confirmTermination(project.id, recoverable.id);
+  assert.equal(recovered.terminationVerified, true);
+  assert.match(fixture.runRepository.events(recoverable.id).at(-1)?.message ?? "", /manually confirmed/i);
+  assert.throws(() => fixture.runService.confirmTermination(project.id, recoverable.id), /already been verified/i);
+
+  const active = fixture.runRepository.create(project.id, "active", "Active run");
+  fixture.runRepository.update(active.id, { status: "RUNNING", terminationVerified: false, codexPid: null });
+  assert.throws(() => fixture.runService.confirmTermination(project.id, active.id), /still active/i);
+
+  const identified = fixture.runRepository.create(project.id, "identified", "Identified run");
+  fixture.runRepository.update(identified.id, { status: "FAILED", terminationVerified: false, codexPid: process.pid });
+  assert.throws(() => fixture.runService.confirmTermination(project.id, identified.id), /process identity/i);
+});
+
 test("completeSuccess honors a late cancellation and rejects cancellation after success", async () => {
   const { ConflictError } = await import("../backend/errors");
   const project = await fixture.project();

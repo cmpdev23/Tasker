@@ -18,4 +18,21 @@ export const runService = {
         : { cancelRequested: true });
     }).immediate();
   },
+  confirmTermination(projectId: string, runId: string) {
+    return sqlite.transaction(() => {
+      const run = runRepository.get(projectId, runId);
+      if (ACTIVE_STATUSES.includes(run.status)) {
+        throw new ConflictError("This run is still active and cannot be recovered manually.");
+      }
+      if (run.terminationVerified) {
+        throw new ConflictError("Process termination has already been verified for this run.");
+      }
+      if (run.codexPid !== null) {
+        throw new ConflictError("A process identity is still recorded for this run; wait for automatic recovery instead.");
+      }
+      const recovered = runRepository.update(runId, { terminationVerified: true });
+      runRepository.event(runId, "recovery", "Process termination manually confirmed after local verification; queue resumed. Worktree preserved.");
+      return recovered;
+    }).immediate();
+  },
 };

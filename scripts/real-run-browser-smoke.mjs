@@ -4,11 +4,11 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 
-// Usage: node scripts/real-run-browser-smoke.mjs <path-to-playwright-module>
+// Usage: node scripts/real-run-browser-smoke.mjs <path-to-playwright-module> [origin]
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.argv[2] || "playwright");
 const fixture = JSON.parse(fs.readFileSync(".test-artifacts/smoke.json", "utf8"));
-const origin = "http://127.0.0.1:5055";
+const origin = process.argv[3] || "http://127.0.0.1:5055";
 const api = async (url, method = "GET", body) => {
   const response = await fetch(origin + url, { method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const value = await response.json();
@@ -18,7 +18,9 @@ const api = async (url, method = "GET", body) => {
 const existing = (await api("/api/projects")).find(project => project.repositoryPath === fixture.repo);
 const project = existing || await api("/api/projects", "POST", { name: "Real Codex smoke", repositoryPath: fixture.repo });
 const base = `/api/projects/${project.id}`;
-if (!existing) await api(base + "/init-tasker", "POST", { baseBranch: "main" });
+if (!fs.existsSync(path.join(fixture.repo, ".tasker"))) {
+  await api(base + "/init-tasker", "POST", { baseBranch: "main" });
+}
 if (!(await api(base + "/runs")).runs.length) {
   for (const task of (await api(base + "/tasks")).tasks) await api(`${base}/tasks/${task.id}`, "DELETE");
 }
@@ -57,7 +59,12 @@ try {
   await page.getByRole("dialog").getByRole("button", { name: /Supprimer/, exact: false }).click();
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   assert.equal((await api(base + "/tasks")).tasks.length, 1);
-  const git = args => execFileSync("git", args, { cwd: fixture.repo, encoding: "utf8", windowsHide: true }).trim();
+  const safeRepo = fixture.repo.replaceAll("\\", "/");
+  const git = args => execFileSync("git", ["-c", `safe.directory=${safeRepo}`, ...args], {
+    cwd: fixture.repo,
+    encoding: "utf8",
+    windowsHide: true,
+  }).trim();
   const before = { status: git(["status", "--porcelain=v1", "--untracked-files=all"]), head: git(["rev-parse", "HEAD"]), branch: git(["branch", "--show-current"]) };
   await page.screenshot({ path: ".test-artifacts/tasks.png", fullPage: true });
   const enqueued = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/tasks/smoke-task/runs"));
@@ -77,6 +84,7 @@ try {
     if (run.status !== lastStatus) { console.log(`${run.status}: ${events.length} events`); lastStatus = run.status; }
     if (run.status === "RUNNING" && events.some(event => event.type === "codex")) {
       live = true;
+      await page.getByRole("button", { name: "Suivi automatique", exact: true }).waitFor();
       await page.screenshot({ path: ".test-artifacts/run-live.png", fullPage: true });
     }
     if (["SUCCESS", "FAILED", "CANCELLED"].includes(run.status)) break;

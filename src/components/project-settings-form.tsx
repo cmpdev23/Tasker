@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
   Select,
@@ -23,6 +24,12 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import {
+  DEFAULT_PROJECT_EXECUTION_SETTINGS,
+  PACKAGE_MANAGERS,
+  type ProjectExecutionRuntimeStatus,
+  type ProjectExecutionSettings,
+} from "@/types/project-execution";
+import {
   FolderOpenIcon,
   GitBranchIcon,
   CheckCircle2Icon,
@@ -30,6 +37,7 @@ import {
   Loader2Icon,
   GlobeIcon,
   SparklesIcon,
+  TerminalSquareIcon,
 } from "lucide-react";
 
 interface GitInspection {
@@ -67,6 +75,13 @@ export function ProjectSettingsForm({
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [isInitializingTasker, setIsInitializingTasker] = useState(false);
   const [isSavingPath, setIsSavingPath] = useState(false);
+  const [executionSettings, setExecutionSettings] = useState<ProjectExecutionSettings>(
+    DEFAULT_PROJECT_EXECUTION_SETTINGS
+  );
+  const [validationScripts, setValidationScripts] = useState("");
+  const [executionRuntime, setExecutionRuntime] = useState<ProjectExecutionRuntimeStatus | null>(null);
+  const [isLoadingExecution, setIsLoadingExecution] = useState(Boolean(initialProject.repositoryPath));
+  const [isSavingExecution, setIsSavingExecution] = useState(false);
 
   // Load Git inspection whenever project.repositoryPath is available
   const fetchGitInspection = useCallback((path?: string, signal?: AbortSignal) => {
@@ -98,6 +113,30 @@ export function ProjectSettingsForm({
     void fetchGitInspection(undefined, controller.signal);
     return () => controller.abort();
   }, [project.repositoryPath, fetchGitInspection]);
+
+  const fetchExecutionSettings = useCallback((signal?: AbortSignal) => {
+    return fetch(`/api/projects/${project.id}/execution`, { signal }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to load execution settings.");
+      if (signal?.aborted) return;
+      setExecutionSettings(data.settings);
+      setValidationScripts(data.settings.validationScripts.join("\n"));
+      setExecutionRuntime(data.runtime);
+    }).catch((error: unknown) => {
+      if (signal?.aborted) return;
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Failed to load execution settings.");
+    }).finally(() => {
+      if (!signal?.aborted) setIsLoadingExecution(false);
+    });
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!inspection?.isTaskerInitialized) return;
+    const controller = new AbortController();
+    void fetchExecutionSettings(controller.signal);
+    return () => controller.abort();
+  }, [inspection?.isTaskerInitialized, fetchExecutionSettings]);
 
   // Handle Browse button
   const handleBrowseFolder = async () => {
@@ -242,6 +281,29 @@ export function ProjectSettingsForm({
       );
     } finally {
       setIsInitializingTasker(false);
+    }
+  };
+
+  const handleSaveExecution = async () => {
+    const scripts = validationScripts.split(/[\n,]/).map((script) => script.trim()).filter(Boolean);
+    setIsSavingExecution(true);
+    try {
+      const response = await fetch(`/api/projects/${project.id}/execution`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: { ...executionSettings, validationScripts: scripts } }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to save execution settings.");
+      setExecutionSettings(data.settings);
+      setValidationScripts(data.settings.validationScripts.join("\n"));
+      setExecutionRuntime(data.runtime);
+      toast.success("Execution settings saved in .tasker/project.toml.");
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Failed to save execution settings.");
+    } finally {
+      setIsSavingExecution(false);
     }
   };
 
@@ -581,6 +643,183 @@ export function ProjectSettingsForm({
               </>
             )}
           </dl>
+        </FramePanel>
+      </Frame>
+
+      {/* 5. Execution Section */}
+      <Frame stacked spacing="sm" className="w-full">
+        <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <FrameTitle>Execution</FrameTitle>
+            <FrameDescription>
+              Deterministic dependency preparation and validations for every Project Run.
+            </FrameDescription>
+          </div>
+          <Button
+            type="button"
+            onClick={handleSaveExecution}
+            disabled={!inspection?.isTaskerInitialized || isLoadingExecution || isSavingExecution}
+            className="gap-1.5"
+          >
+            {isSavingExecution ? <Loader2Icon className="size-4 animate-spin" /> : <TerminalSquareIcon className="size-4" />}
+            Save execution
+          </Button>
+        </FrameHeader>
+
+        <FramePanel className="p-0">
+          {!inspection?.isTaskerInitialized ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              Initialize Tasker before configuring Project execution.
+            </div>
+          ) : isLoadingExecution ? (
+            <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
+              <Loader2Icon className="size-4 animate-spin" /> Loading execution settings...
+            </div>
+          ) : (
+            <dl className="flex flex-col">
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-center">
+                <dt className="text-muted-foreground text-sm font-medium">Package manager</dt>
+                <dd className="flex flex-col gap-1.5">
+                  <Select
+                    value={executionSettings.packageManager}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      setExecutionRuntime(null);
+                      setExecutionSettings((current) => ({
+                        ...current,
+                        packageManager: value as ProjectExecutionSettings["packageManager"],
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="w-48 font-mono text-xs">
+                      <SelectValue>{executionSettings.packageManager}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start" alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {PACKAGE_MANAGERS.map((manager) => (
+                          <SelectItem key={manager} value={manager} className="font-mono text-xs">{manager}</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Choose the manager matching the repository lockfile.</p>
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-center">
+                <dt className="text-muted-foreground text-sm font-medium">Install dependencies</dt>
+                <dd className="flex flex-col gap-1.5">
+                  <Select
+                    value={executionSettings.installDependencies ? "enabled" : "disabled"}
+                    onValueChange={(value) => value && setExecutionSettings((current) => ({
+                      ...current,
+                      installDependencies: value === "enabled",
+                    }))}
+                  >
+                    <SelectTrigger className="w-48 text-xs">
+                      <SelectValue>{executionSettings.installDependencies ? "Enabled" : "Disabled"}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start" alignItemWithTrigger={false}>
+                      <SelectItem value="enabled">Enabled</SelectItem>
+                      <SelectItem value="disabled">Disabled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Runs lifecycle scripts and may use the network. Enable only for repositories you trust.
+                  </p>
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
+                <dt className="text-muted-foreground text-sm font-medium">Validation scripts</dt>
+                <dd className="flex flex-col gap-1.5">
+                  <Textarea
+                    value={validationScripts}
+                    onChange={(event) => setValidationScripts(event.target.value)}
+                    placeholder={"lint\nbuild"}
+                    className="min-h-20 max-w-md font-mono text-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    One package.json script per line. All scripts must pass before AgentTasker commits.
+                  </p>
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
+                <dt className="text-muted-foreground text-sm font-medium">Timeouts</dt>
+                <dd className="grid max-w-md gap-3 sm:grid-cols-3">
+                  {([
+                    ["Run", "defaultTimeoutMinutes"],
+                    ["Install", "installTimeoutMinutes"],
+                    ["Validation", "validationTimeoutMinutes"],
+                  ] as const).map(([label, key]) => (
+                    <label key={key} className="flex flex-col gap-1 text-xs text-muted-foreground">
+                      {label} (minutes)
+                      <Input
+                        type="number"
+                        min={1}
+                        max={key === "defaultTimeoutMinutes" ? 1440 : 120}
+                        value={executionSettings[key]}
+                        onChange={(event) => setExecutionSettings((current) => ({
+                          ...current,
+                          [key]: Number(event.target.value),
+                        }))}
+                        className="font-mono text-xs"
+                      />
+                    </label>
+                  ))}
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
+                <dt className="text-muted-foreground text-sm font-medium">Runtime preflight</dt>
+                <dd className="flex flex-col gap-2 text-xs">
+                  {(["node", "packageManager"] as const).map((key) => {
+                    const status = executionRuntime?.[key];
+                    const label = key === "node" ? "Node.js" : executionSettings.packageManager;
+                    return (
+                      <div key={key} className="flex min-w-0 items-center gap-2">
+                        <Badge variant={status == null ? "outline" : status.available ? "success-light" : "destructive-light"}>
+                          {status == null ? "Not checked" : status.available ? "Available" : "Unavailable"}
+                        </Badge>
+                        <span className="font-medium">{label}</span>
+                        <span className="truncate font-mono text-muted-foreground" title={status?.executable || status?.detail || undefined}>
+                          {status?.detail || status?.executable || "Save to refresh this check"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
+                <dt className="text-muted-foreground text-sm font-medium">Resolved commands</dt>
+                <dd className="flex flex-col gap-1 font-mono text-xs">
+                  <span>{executionSettings.installDependencies
+                    ? ({
+                        npm: "npm ci",
+                        pnpm: "pnpm install --frozen-lockfile",
+                        yarn: "yarn install --immutable",
+                        bun: "bun install --frozen-lockfile",
+                      } as const)[executionSettings.packageManager]
+                    : "Dependency installation disabled"}</span>
+                  {(validationScripts.split(/[\n,]/).map((script) => script.trim()).filter(Boolean)).map((script) => (
+                    <span key={script}>{executionSettings.packageManager} run {script}</span>
+                  ))}
+                </dd>
+              </div>
+            </dl>
+          )}
         </FramePanel>
       </Frame>
     </div>

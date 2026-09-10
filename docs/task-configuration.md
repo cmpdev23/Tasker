@@ -15,6 +15,11 @@ filesystem paths that could redirect operations outside the task directory.
 The UI, scheduler and runner share one validated filesystem service and the same
 `TaskDefinition` contract. This module implements configuration only.
 
+Les Tasks héritent actuellement de la préparation et des validations du Project,
+configurées sous `[execution]` dans `.tasker/project.toml`; voir
+[l’architecture du runner](task-runner-architecture.md). Les overrides par Task ne
+font pas encore partie de ce contrat.
+
 ## Contract
 
 - `src/types/tasks.ts`: `TaskDefinition`, `TaskInput`, `TASK_WEEKDAYS`.

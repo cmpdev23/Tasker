@@ -4,7 +4,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 // Disposable local origin and checkout: this script never operates on the application's Git repository.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "agenttasker-real-"));
+// An optional base directory keeps the fixture visible to sandboxed development servers.
+const requestedBase = process.argv[2] ? path.resolve(process.argv[2]) : os.tmpdir();
+fs.mkdirSync(requestedBase, { recursive: true });
+const root = fs.mkdtempSync(path.join(requestedBase, "agenttasker-real-"));
 const repo = path.join(root, "checkout");
 const remote = path.join(root, "origin.git");
 const git = (args, cwd = root) => execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();

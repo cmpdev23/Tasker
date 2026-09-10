@@ -56,3 +56,7 @@ export const SCHEDULE_LABELS = { manual: "Manuelle", once: "Une seule fois", hou
 export function isActiveRun(status: string) {
   return ["QUEUED", "PREPARING", "RUNNING", "VALIDATING", "CLEANING_UP"].includes(status);
 }
+
+export function isRerunnableRun(status: string) {
+  return status === "FAILED";
+}

@@ -220,8 +220,19 @@ base_branch = "main"
 
 [execution]
 default_timeout_minutes = 180
-preserve_failed_worktree = true
+package_manager = "npm"
+install_dependencies = false
+install_timeout_minutes = 15
+validation_scripts = ["lint", "build"]
+validation_timeout_minutes = 20
 ```
+
+Ces réglages sont partagés par les Tasks du Project. AgentTasker transforme les
+noms de scripts en commandes déterministes du gestionnaire choisi; il ne stocke
+pas de chemins absolus vers Node ou npm et n’accepte pas de commande shell libre.
+L’installation reste désactivée par défaut et doit être activée explicitement dans
+Settings pour un dépôt de confiance. Les overrides de ces réglages par Task restent
+une extension future.
 
 Project instructions should remain in a Markdown file rather than
 embedding large prompts inside TOML:
@@ -290,11 +301,8 @@ push = true
 create_pull_request = true
 pull_request_draft = true
 
-[[validation.commands]]
-command = "npm run lint"
-
-[[validation.commands]]
-command = "npm run build"
+# Hérite actuellement de [execution].validation_scripts dans project.toml.
+# Un override de validation par Task n'est pas encore implémenté.
 ```
 
 The exact schema will evolve, but the persistence boundary defined in

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Project, Run } from "@db/schema";
 import type { TaskDefinition, TaskInput } from "@/types/tasks";
-import { AlertCircleIcon, HistoryIcon, ListTodoIcon, Loader2Icon, PencilIcon, PlayIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import { AlertCircleIcon, HistoryIcon, ListTodoIcon, Loader2Icon, PencilIcon, PlayIcon, PlusIcon, RotateCcwIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Badge } from "@/components/reui/badge";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { TaskEditorDialog } from "@/components/task-editor-dialog";
 import { RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
-import { errorMessage, formatRunDate, SCHEDULE_LABELS, taskRequest, WEEKDAYS } from "@/components/task-ui-utils";
+import { errorMessage, formatRunDate, isRerunnableRun, SCHEDULE_LABELS, taskRequest, WEEKDAYS } from "@/components/task-ui-utils";
 
 function scheduleLabel(task: TaskDefinition) {
   const { type, startsAt, time, timezone, days } = task.schedule;
@@ -147,7 +147,7 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
                   <th scope="row" className="min-w-44 p-4 font-normal"><span className="block font-medium">{task.name}</span><code className="mt-1 block text-xs text-muted-foreground">{task.id}</code>{!task.enabled && <Badge className="mt-2" variant="secondary">Désactivée</Badge>}</th>
                   <td className="min-w-40 p-4 text-xs leading-relaxed">{scheduleLabel(task)}{task.schedule.startsAt && task.schedule.type !== "once" && task.schedule.type !== "manual" && <span className="mt-1 block text-muted-foreground">À partir du {formatRunDate(task.schedule.startsAt, task.schedule.timezone)}</span>}</td>
                   <td className="min-w-36 p-4">{last ? <button type="button" className="rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSelectedRun(last)} aria-label={`Ouvrir le dernier Run de ${task.name}`}><RunStatusBadge status={last.status} /><span className="mt-2 block text-xs text-muted-foreground">{formatRunDate(last.startedAt || last.queuedAt)}</span></button> : <span className="text-xs text-muted-foreground">{runError ? "Indisponible" : runs.length >= 200 && !historyEnd ? "Aucun Run récent" : "Jamais exécutée"}</span>}</td>
-                  <td className="p-4"><div className="flex justify-end gap-1"><Button size="sm" variant="outline" disabled={!!starting || !!taskError} onClick={() => runNow(task.id)}>{starting === task.id ? <Loader2Icon className="size-4 animate-spin" /> : <PlayIcon className="size-4" />}Exécuter</Button><Button size="icon-sm" variant="ghost" aria-label={`Historique de ${task.name}`} title="Historique" onClick={() => { setHistoryTask(task.id); document.getElementById("task-run-history")?.scrollIntoView({ block: "start", behavior: "smooth" }); }}><HistoryIcon className="size-4" /></Button><Button size="icon-sm" variant="ghost" aria-label={`Modifier ${task.name}`} title="Modifier" disabled={!!taskError} onClick={() => setEditor(task)}><PencilIcon className="size-4" /></Button><Button size="icon-sm" variant="ghost" aria-label={`Supprimer ${task.name}`} title="Supprimer" disabled={!!taskError} onClick={() => { setDeleteError(null); setDeleteTask(task); }}><Trash2Icon className="size-4" /></Button></div></td>
+                  <td className="p-4"><div className="flex justify-end gap-1"><Button size="sm" variant="outline" disabled={!!starting || !!taskError} onClick={() => runNow(task.id)}>{starting === task.id ? <Loader2Icon className="size-4 animate-spin" /> : isRerunnableRun(last?.status ?? "") ? <RotateCcwIcon className="size-4" /> : <PlayIcon className="size-4" />}{isRerunnableRun(last?.status ?? "") ? "Réexécuter" : "Exécuter"}</Button><Button size="icon-sm" variant="ghost" aria-label={`Historique de ${task.name}`} title="Historique" onClick={() => { setHistoryTask(task.id); document.getElementById("task-run-history")?.scrollIntoView({ block: "start", behavior: "smooth" }); }}><HistoryIcon className="size-4" /></Button><Button size="icon-sm" variant="ghost" aria-label={`Modifier ${task.name}`} title="Modifier" disabled={!!taskError} onClick={() => setEditor(task)}><PencilIcon className="size-4" /></Button><Button size="icon-sm" variant="ghost" aria-label={`Supprimer ${task.name}`} title="Supprimer" disabled={!!taskError} onClick={() => { setDeleteError(null); setDeleteTask(task); }}><Trash2Icon className="size-4" /></Button></div></td>
                 </tr>;
               })}</tbody></table>
             </div>}
@@ -158,13 +158,21 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
         <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between"><div><FrameTitle>Historique des Runs</FrameTitle><FrameDescription>{historyTask ? `Tâche : ${tasks.find((task) => task.id === historyTask)?.name || historyTask}` : "Toutes les exécutions du projet · actualisation toutes les 3 s"}</FrameDescription></div>{historyTask && <Button size="sm" variant="outline" onClick={() => setHistoryTask(null)}>Toutes les tâches</Button>}</FrameHeader>
         <FramePanel className="p-0">
           {runError && <p role="alert" className="border-b bg-destructive/5 p-4 text-sm text-destructive">{runError} Nouvelle tentative automatique…</p>}
-          {loading ? <p role="status" className="p-6 text-sm text-muted-foreground">Chargement de l’historique…</p> : !visibleRuns.length ? <p className="p-6 text-sm text-muted-foreground">{runError ? "Historique indisponible." : "Aucune exécution dans l’historique chargé."}</p> : <ul className="max-h-[32rem] divide-y overflow-y-auto">{visibleRuns.map((run) => <li key={run.id}><button type="button" onClick={() => setSelectedRun(run)} className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"><span className="min-w-0 flex-1"><span className="block break-words text-sm font-medium">{run.taskName || run.taskId}</span><span className="mt-1 block text-xs text-muted-foreground">{formatRunDate(run.startedAt || run.queuedAt)}</span><span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{run.id}</span></span><RunStatusBadge status={run.status} /></button></li>)}</ul>}
+          {loading ? <p role="status" className="p-6 text-sm text-muted-foreground">Chargement de l’historique…</p> : !visibleRuns.length ? <p className="p-6 text-sm text-muted-foreground">{runError ? "Historique indisponible." : "Aucune exécution dans l’historique chargé."}</p> : <ul className="max-h-[32rem] divide-y overflow-y-auto">{visibleRuns.map((run) => {
+            const taskExists = tasks.some((task) => task.id === run.taskId);
+            return <li key={run.id} className="flex items-center gap-2 pr-4 transition-colors hover:bg-muted/30">
+              <button type="button" onClick={() => setSelectedRun(run)} className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3 px-4 py-3 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                <span className="min-w-0 flex-1"><span className="block break-words text-sm font-medium">{run.taskName || run.taskId}</span><span className="mt-1 block text-xs text-muted-foreground">{formatRunDate(run.startedAt || run.queuedAt)}</span><span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{run.id}</span></span><RunStatusBadge status={run.status} />
+              </button>
+              {isRerunnableRun(run.status) && taskExists && <Button type="button" size="sm" variant="outline" disabled={!!starting || !!taskError} onClick={() => void runNow(run.taskId)} title="Créer un nouveau Run avec la configuration actuelle">{starting === run.taskId ? <Loader2Icon className="size-4 animate-spin" /> : <RotateCcwIcon className="size-4" />}Réexécuter</Button>}
+            </li>;
+          })}</ul>}
           {olderError && <p role="alert" className="px-4 py-3 text-sm text-destructive">{olderError}</p>}
           {runs.length >= 200 && !historyEnd && <div className="border-t p-3"><Button variant="outline" size="sm" disabled={loadingOlder} onClick={loadOlderRuns}>{loadingOlder && <Loader2Icon className="size-4 animate-spin" />}Charger les Runs précédents</Button></div>}
         </FramePanel>
       </Frame>}
       {editor !== undefined && <TaskEditorDialog task={editor} onClose={() => setEditor(undefined)} onSave={saveTask} />}
-      {selectedRun && <TaskRunSheet key={selectedRun.id} projectId={project.id} initialRun={selectedRun} onClose={() => { setSelectedRun(null); setRefresh((value) => value + 1); }} />}
+      {selectedRun && <TaskRunSheet key={selectedRun.id} projectId={project.id} initialRun={selectedRun} rerunning={starting === selectedRun.taskId} onRerun={tasks.some((task) => task.id === selectedRun.taskId) ? () => void runNow(selectedRun.taskId) : undefined} onClose={() => { setSelectedRun(null); setRefresh((value) => value + 1); }} />}
       <Dialog open={!!deleteTask} onOpenChange={(open) => { if (!open && !deleting) setDeleteTask(null); }}>
         <DialogContent showCloseButton={!deleting}>
           <DialogHeader><DialogTitle>Supprimer la tâche ?</DialogTitle><DialogDescription>La définition de « {deleteTask?.name} » sera supprimée du repository. L’historique des Runs reste consultable.</DialogDescription></DialogHeader>

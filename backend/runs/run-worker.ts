@@ -6,14 +6,22 @@ import { db, sqlite } from "../../db/client";
 import { runnerLock, type Run } from "../../db/schema";
 import { projectService } from "../projects/project.service";
 import { taskService } from "../tasks/task.service";
-import { readInteger, readString, sectionContent } from "../tasks/toml";
+import { readString, sectionContent } from "../tasks/toml";
 import { agentsService } from "../tasker/agents.service";
-import { runCodex, CODEX_RUN_OUTPUT_SCHEMA } from "../codex/codex-runner";
+import { parseProjectExecutionSettings } from "../tasker/project-execution";
+import { runCodex, CODEX_RUN_OUTPUT_SCHEMA, verifyExitedProcessTree } from "../codex/codex-runner";
 import { prepareRunWorktree, finalizeRunWorktree, inspectRunChanges, cleanupSuccessfulWorktree,
   type RunWorktree } from "../git/run-git.service";
 import { evaluateSchedules } from "../scheduler/scheduler.service";
 import { RUNNER_CONFIG } from "./runner-config";
 import { runRepository } from "./run.repository";
+import {
+  assertProjectExecutionRuntime,
+  projectPreparationCommands,
+  projectValidationCommands,
+  runProjectCommand,
+  type ProjectCommand,
+} from "./project-command-runner";
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -32,6 +40,44 @@ function readProjectFile(repo: string, relative: string): string {
 export async function executeRun(run: Run, controller = new AbortController()) {
   let worktree: RunWorktree | undefined;
   const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
+  const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
+    if (!worktree) throw new Error("Project commands require a prepared worktree.");
+    const display = `${command.executable} ${command.args.join(" ")}`;
+    event(phase, `Starting ${command.name}: ${display}`);
+    // Persist before spawn so a server crash never certifies an unknown child process as stopped.
+    runRepository.update(run.id, { terminationVerified: false });
+    try {
+      const result = await runProjectCommand(command, {
+        cwd: worktree.worktreePath,
+        signal: controller.signal,
+        onEvent: (entry) => {
+          if (entry.type === "started") {
+            runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
+          } else if (entry.type === "stdout" || entry.type === "stderr") {
+            event(entry.type, `[${phase}] ${entry.text}`);
+          } else {
+            event("termination", JSON.stringify({ ...entry, command: display }));
+          }
+        },
+      });
+      runRepository.update(run.id, {
+        codexPid: result.terminationVerified ? null : result.pid,
+        terminationVerified: result.terminationVerified,
+      });
+      if (result.cancelled || result.timedOut || result.exitCode !== 0 || result.error) {
+        throw new Error(result.error || (result.cancelled
+          ? `${command.name} was cancelled.`
+          : result.timedOut
+            ? `${command.name} timed out after ${Math.round(command.timeoutMs / 60_000)} minutes.`
+            : `${command.name} failed.`));
+      }
+      event(phase, `Completed ${command.name}: ${display}`);
+    } catch (error) {
+      const current = runRepository.get(run.projectId, run.id);
+      if (!current.codexPid) runRepository.update(run.id, { terminationVerified: true });
+      throw error;
+    }
+  };
   const cancellation = setInterval(() => {
     if (runRepository.get(run.projectId, run.id).cancelRequested) controller.abort();
   }, 500);
@@ -41,6 +87,8 @@ export async function executeRun(run: Run, controller = new AbortController()) {
     if (!project.repositoryPath) throw new Error("Configure the project repository in Settings first.");
     const task = await taskService.get(run.projectId, run.taskId);
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
+    const executionSettings = parseProjectExecutionSettings(projectToml);
+    assertProjectExecutionRuntime(executionSettings);
     const git = sectionContent(projectToml, "git");
     const baseBranch = readString(git, "base_branch");
     if (!baseBranch) throw new Error("Configure a base branch in .tasker/project.toml.");
@@ -48,11 +96,14 @@ export async function executeRun(run: Run, controller = new AbortController()) {
     readProjectFile(project.repositoryPath, ".tasker/agents/main.toml");
     const { main } = await agentsService.getAgents(run.projectId);
     const projectInstructions = readProjectFile(project.repositoryPath, ".tasker/instructions.md");
-    const timeoutMinutes = readInteger(sectionContent(projectToml, "execution"), "default_timeout_minutes");
-    const timeoutMs = timeoutMinutes && timeoutMinutes > 0 ? timeoutMinutes * 60_000 : RUNNER_CONFIG.timeoutMs;
-    const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns Git finalization. Report a truthful final result and any blocking error.\n`;
+    const timeoutMs = executionSettings.defaultTimeoutMinutes * 60_000;
+    const preparationCommands = projectPreparationCommands(executionSettings);
+    const validationCommands = projectValidationCommands(executionSettings);
+    const managedCommands = [...preparationCommands, ...validationCommands]
+      .map((command) => `- ${command.executable} ${command.args.join(" ")}`).join("\n") || "- None configured";
+    const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final Run status. Report a truthful result about the requested work and any other blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
     runRepository.update(run.id, { baseRemote: remote, baseBranch,
-      resolvedConfig: JSON.stringify({ codex: main, timeoutMs, expectChanges: task.expectChanges }) });
+      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, timeoutMs, expectChanges: task.expectChanges }) });
     controller.signal.throwIfAborted();
     worktree = await prepareRunWorktree({ repoPath: project.repositoryPath,
       worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"), runId: run.id,
@@ -60,6 +111,10 @@ export async function executeRun(run: Run, controller = new AbortController()) {
       onPrepared: (prepared) => { runRepository.update(run.id, { baseCommit: prepared.baseCommit,
         runBranch: prepared.branch, worktreePath: prepared.worktreePath }); },
     });
+    for (const command of preparationCommands) {
+      controller.signal.throwIfAborted();
+      await executeProjectCommand(command, "preparation");
+    }
     runRepository.update(run.id, { status: "RUNNING", baseCommit: worktree.baseCommit,
       runBranch: worktree.branch, worktreePath: worktree.worktreePath });
     event("status", `Starting Codex (${main.model || "Codex default"}) in ${worktree.worktreePath}`);
@@ -81,6 +136,11 @@ export async function executeRun(run: Run, controller = new AbortController()) {
       throw new Error(result.error || (cancelled ? "Run cancelled." : result.timedOut ? "Codex timed out." : "Codex did not complete successfully."));
     }
     runRepository.update(run.id, { status: "VALIDATING" });
+    event("status", "Running configured validations");
+    for (const command of validationCommands) {
+      controller.signal.throwIfAborted();
+      await executeProjectCommand(command, "validation");
+    }
     event("status", "Validating Git changes and committing the run branch");
     const gitResult = await finalizeRunWorktree(worktree, { exitCode: result.exitCode,
       validationsSucceeded: true, expectChanges: task.expectChanges, commit: true,
@@ -135,21 +195,31 @@ export function createRunner() {
     try {
       if (!acquire()) return;
       if (!owned) { owned = true; console.info("[AgentTasker] Scheduler and single worker started."); }
-      // A killed server may leave Codex alive. Never start another agent or blindly kill a reused PID.
+      // A killed server may leave its active subprocess alive. Never start another Run or blindly kill a reused PID.
       for (const interrupted of execution ? [] : runRepository.active()) {
-        if (interrupted.codexPid && alive(interrupted.codexPid)) {
-          const message = "Previous server stopped while Codex may still be alive. Queue paused until that process exits; worktree preserved.";
-          if (interrupted.error !== message) {
-            runRepository.update(interrupted.id, { error: message });
-            runRepository.event(interrupted.id, "recovery", message);
+        if (interrupted.codexPid) {
+          try {
+            // A dead root can still have detached descendants. The platform-specific verifier
+            // checks the complete process tree/group before certifying a queue restart.
+            await verifyExitedProcessTree(interrupted.codexPid);
+          } catch {
+            const message = "Previous server stopped while a Run subprocess may still be alive. Queue paused until that process exits; worktree preserved.";
+            if (interrupted.error !== message) {
+              runRepository.update(interrupted.id, { error: message });
+              runRepository.event(interrupted.id, "recovery", message);
+            }
+            return;
           }
-          return;
         }
+        const terminationVerified = interrupted.terminationVerified || interrupted.codexPid !== null;
         runRepository.update(interrupted.id, { status: interrupted.cancelRequested ? "CANCELLED" : "FAILED",
-          error: interrupted.terminationVerified ? "Server stopped before this run completed. Worktree and logs preserved."
+          error: terminationVerified ? "Server stopped before this run completed. Worktree and logs preserved."
             : "Server stopped before process termination was verified. Queue blocked pending local recovery; worktree and logs preserved.", codexPid: null,
+          terminationVerified,
           completedAt: new Date().toISOString() });
-        runRepository.event(interrupted.id, "recovery", "Interrupted run recovered; preserved worktree for inspection.");
+        runRepository.event(interrupted.id, "recovery", terminationVerified
+          ? "Interrupted run process tree verified stopped; queue resumed. Worktree preserved for inspection."
+          : "Interrupted run recovered; preserved worktree for inspection.");
       }
       if (!execution && runRepository.hasUnverifiedTermination()) return;
       const errors = (await evaluateSchedules()).join("\n");

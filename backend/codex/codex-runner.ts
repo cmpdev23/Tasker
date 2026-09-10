@@ -233,11 +233,11 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
 }
 
 /** Root exit does not imply child exit. This check is read-only, including for a dead/reused root PID. */
-async function verifyExitedProcessTree(pid: number): Promise<void> {
+export async function verifyExitedProcessTree(pid: number): Promise<void> {
   if (process.platform === "win32") {
     // Toolhelp retains the original PPID after the parent exits, including detached children.
     if (descendants(await windowsProcesses(), pid).length > 0) {
-      throw new Error("Codex exited but descendant processes may still be running; queue must remain blocked.");
+      throw new Error("The process exited but descendant processes may still be running; queue must remain blocked.");
     }
     return;
   }
@@ -248,11 +248,11 @@ async function verifyExitedProcessTree(pid: number): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
     throw error;
   }
-  throw new Error("Codex exited but its process group still exists; queue must remain blocked.");
+  throw new Error("The process exited but its process group still exists; queue must remain blocked.");
 }
 
 /** Retain descendants across parent exit; do not cancel force escalation when the parent closes. */
-async function terminateProcessTree(pid: number, graceMs: number, forceEvent: () => void): Promise<void> {
+export async function terminateProcessTree(pid: number, graceMs: number, forceEvent: () => void): Promise<void> {
   if (process.platform !== "win32") {
     signalProcessGroup(pid, "SIGTERM");
     await new Promise((resolve) => setTimeout(resolve, graceMs));
@@ -267,7 +267,7 @@ async function terminateProcessTree(pid: number, graceMs: number, forceEvent: ()
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    throw new Error("Codex process group still exists after termination; queue must remain blocked.");
+    throw new Error("The process group still exists after termination; queue must remain blocked.");
   }
   let snapshot: WindowsProcess[] = [];
   let snapshotError: unknown;
@@ -305,7 +305,7 @@ async function terminateProcessTree(pid: number, graceMs: number, forceEvent: ()
   if ([...targets.values()].some((original) => remaining.some((entry) => entry.ProcessId === original.ProcessId && entry.Started === original.Started)) ||
       // A newly orphaned descendant must keep the queue blocked even if its root exited.
       remaining.some((entry) => targets.has(entry.ParentProcessId) || snapshot.some((original) => original.ProcessId === entry.ParentProcessId))) {
-    throw new Error("Some Codex child processes could not be terminated; keep the worktree for recovery.");
+    throw new Error("Some child processes could not be terminated; keep the worktree for recovery.");
   }
 }
 

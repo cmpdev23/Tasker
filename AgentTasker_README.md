@@ -169,6 +169,12 @@ override these defaults.
 Possible project defaults include worktree location, cleanup behavior,
 and whether failed work should be preserved.
 
+The current V1 exposes the package manager, optional locked dependency
+installation, ordered `package.json` validation scripts, and separate Run,
+installation, and validation timeouts. These portable settings are stored under
+`[execution]` in `.tasker/project.toml`; executable paths remain local to the
+machine and are only reported by the Settings preflight.
+
 ## 6. Instructions and Knowledge
 
 This module contains persistent context shared by tasks.
@@ -356,6 +362,10 @@ Execute Run
 Manual `Run now` executions use the same queue. Global settings control
 maximum concurrent runs so multiple expensive agents do not launch
 unexpectedly.
+
+Rerunning a failed Task creates another manual Run from the current Task and
+Project configuration. The failed Run, logs, branch and worktree remain intact;
+the new Run starts from the current remote base rather than resuming that worktree.
 
 ## 12. Git worktree lifecycle
 
@@ -571,6 +581,7 @@ rawPayload
 - repository-based references;
 - task creation/editing;
 - manual `Run now`;
+- rerun of failed Tasks as a new queued Run;
 - recurring scheduling;
 - internal scheduler;
 - execution queue;

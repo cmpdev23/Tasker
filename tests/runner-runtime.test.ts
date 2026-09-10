@@ -103,6 +103,21 @@ test("runtime reclaims an exited owner's lock and recovers interrupted runs with
   } finally { await runner.stop(); await eventually(() => !lock()); }
 });
 
+test("runtime verifies an exited interrupted process tree before it resumes the queue", async () => {
+  const project = await fixture.project();
+  const interrupted = fixture.runRepository.create(project.id, "interrupted", "Interrupted");
+  fixture.runRepository.update(interrupted.id, { status: "RUNNING", codexPid: exitedPid(), terminationVerified: false });
+  const runner = createRunner();
+  try {
+    await eventually(() => fixture.runRepository.get(project.id, interrupted.id).status === "FAILED");
+    const recovered = fixture.runRepository.get(project.id, interrupted.id);
+    assert.equal(recovered.terminationVerified, true);
+    assert.equal(recovered.codexPid, null);
+    assert.match(recovered.error ?? "", /Server stopped/i);
+    assert.match(fixture.runRepository.events(interrupted.id).at(-1)?.message ?? "", /queue resumed/i);
+  } finally { await runner.stop(); await eventually(() => !lock()); }
+});
+
 test("an alive orphan pauses the queue and records recovery once without signalling it", async () => {
   const project = await fixture.project();
   const orphan = fixture.runRepository.create(project.id, "orphan", "Orphan");
