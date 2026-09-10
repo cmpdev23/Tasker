@@ -1,5 +1,5 @@
 import { type ReactNode } from "react"
-import { LayoutDashboardIcon, FolderIcon, SquareCheckIcon, CircleDotIcon, UsersIcon, BarChart3Icon, ExternalLinkIcon, UserPlusIcon, FlagIcon, CopyIcon, ArchiveIcon } from "lucide-react"
+import { FolderIcon, SquareCheckIcon, ExternalLinkIcon, UserPlusIcon, FlagIcon, CopyIcon, ArchiveIcon } from "lucide-react"
 
 // ── Types ──
 
@@ -65,56 +65,18 @@ export const WORKSPACES: Workspace[] = [
 
 export const NAV_MAIN: NavItem[] = [
   {
-    id: "dashboard",
-    label: "Dashboard",
-    icon: (
-      <LayoutDashboardIcon aria-hidden="true" />
-    ),
-    isActive: true,
-  },
-  {
     id: "projects",
     label: "Projects",
     icon: (
       <FolderIcon aria-hidden="true" />
     ),
+    isActive: true,
   },
   {
     id: "tasks",
     label: "My Tasks",
     icon: (
       <SquareCheckIcon aria-hidden="true" />
-    ),
-  },
-  {
-    id: "issues",
-    label: "Issues",
-    icon: (
-      <CircleDotIcon aria-hidden="true" />
-    ),
-    children: [
-      { id: "backlog", label: "Backlog" },
-      { id: "in-progress", label: "In Progress" },
-      { id: "resolved", label: "Resolved" },
-    ],
-  },
-  {
-    id: "team",
-    label: "Team",
-    icon: (
-      <UsersIcon aria-hidden="true" />
-    ),
-    children: [
-      { id: "members", label: "Members" },
-      { id: "workload", label: "Workload" },
-      { id: "permissions", label: "Permissions" },
-    ],
-  },
-  {
-    id: "reports",
-    label: "Reports",
-    icon: (
-      <BarChart3Icon aria-hidden="true" />
     ),
   },
 ]
@@ -127,30 +89,6 @@ export const ACTIVE_PROJECTS: Project[] = [
     name: "Design System",
     progress: 72,
     color: "stroke-blue-500",
-  },
-  {
-    id: "api-int",
-    name: "API Integration",
-    progress: 45,
-    color: "stroke-violet-500",
-  },
-  {
-    id: "mobile-app",
-    name: "Mobile App",
-    progress: 88,
-    color: "stroke-emerald-500",
-  },
-  {
-    id: "analytics",
-    name: "Analytics Dashboard",
-    progress: 30,
-    color: "stroke-orange-500",
-  },
-  {
-    id: "auth-mod",
-    name: "Auth Module",
-    progress: 60,
-    color: "stroke-rose-500",
   },
 ]
 

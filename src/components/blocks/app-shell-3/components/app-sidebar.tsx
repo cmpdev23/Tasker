@@ -11,8 +11,6 @@ import { NavMain } from "./nav-main"
 import { NavProjects } from "./nav-projects"
 import { NavWorkspace } from "./nav-workspace"
 import { NotificationsPopover } from "./notifications-popover"
-import { SearchForm } from "./search-form"
-import { SpendingLimit } from "./spending-limit"
 
 export function AppSidebar() {
   return (
@@ -34,16 +32,8 @@ export function AppSidebar() {
 
       {/* Sidebar */}
       <SidebarContent>
-        <div className="py-2 pt-2">
-          <SearchForm />
-        </div>
-
         <NavMain />
         <NavProjects />
-
-        <div className="mt-auto">
-          <SpendingLimit />
-        </div>
       </SidebarContent>
 
       {/* Footer */}
