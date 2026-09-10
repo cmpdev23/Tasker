@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
+import { resolveCodexExecutable } from "./codex-executable";
 import { createInterface } from "node:readline";
 import {
   CODEX_REASONING_EFFORTS,
@@ -31,40 +30,6 @@ interface AppServerMessage {
 
 const CACHE_DURATION_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
-
-function resolveCodexExecutable(): string {
-  if (process.platform !== "win32") {
-    return "codex";
-  }
-
-  const localAppData = process.env.LOCALAPPDATA;
-  if (!localAppData) {
-    return "codex";
-  }
-
-  const binDirectory = path.join(localAppData, "OpenAI", "Codex", "bin");
-  if (!fs.existsSync(binDirectory)) {
-    return "codex";
-  }
-
-  const directExecutable = path.join(binDirectory, "codex.exe");
-  if (fs.existsSync(directExecutable)) {
-    return directExecutable;
-  }
-
-  const versionedExecutables = fs
-    .readdirSync(binDirectory, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(binDirectory, entry.name, "codex.exe"))
-    .filter((candidate) => fs.existsSync(candidate))
-    .map((candidate) => ({
-      candidate,
-      modifiedAt: fs.statSync(candidate).mtimeMs,
-    }))
-    .sort((left, right) => right.modifiedAt - left.modifiedAt);
-
-  return versionedExecutables[0]?.candidate ?? "codex";
-}
 
 function isReasoningEffort(value: unknown): value is CodexReasoningEffort {
   return CODEX_REASONING_EFFORTS.includes(value as CodexReasoningEffort);

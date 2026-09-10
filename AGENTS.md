@@ -19,20 +19,22 @@ La vision et le périmètre produit de référence se trouvent dans `AgentTasker
 - Un Project regroupe `Overview`, `Tasks`, `Instructions` et `Settings`.
 - Les Instructions de projet sont persistantes et s’ajoutent aux instructions propres à une Task. Les références sélectionnées sont des chemins relatifs dans le dépôt, sans duplication ni RAG requis pour le MVP.
 - Une **Task** est une définition réutilisable : instructions, références, surcharges agent, planification, validations et comportement Git.
-- Un **Run** est une exécution d’une Task, avec les statuts initiaux `QUEUED`, `RUNNING`, `VALIDATING`, `SUCCESS`, `FAILED` ou `CANCELLED`.
+- Un **Run** est une exécution d’une Task, avec les statuts `QUEUED`, `PREPARING`, `RUNNING`, `VALIDATING`, `SUCCESS`, `FAILED` ou `CANCELLED`.
 - Le Scheduler crée les Runs dus ; tous les Runs, y compris `Run now`, passent par la même Queue avant d’être traités par des Workers. Aucun ordonnanceur OS (cron, Task Scheduler, systemd ou launchd) ne doit être utilisé pour chaque Task.
 - Les exécutions longues appartiennent au runner serveur, pas à une requête du navigateur. Le navigateur sert au contrôle et à l’observabilité et peut être fermé sans interrompre un Run.
 
 ## Architecture et stack actuelle
 
 - Application Next.js 16 (App Router), TypeScript, React 19 et Tailwind CSS 4.
-- `src/app/page.tsx` rend actuellement un App Shell ReUI de démarrage.
+- `src/app/page.tsx` et `src/app/[projectSlug]/page.tsx` utilisent l’App Shell ReUI et les vues Project (Overview, Settings, Instructions, Tasks, Agents).
 - `src/components/blocks/app-shell-3/` contient l’App Shell et sa navigation latérale persistante.
 - `src/components/ui/` contient les primitives shadcn ; `src/components/reui/` contient les primitives ReUI.
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
 - SQLite/Drizzle, la gestion des Projects, l'initialisation `.tasker/`, les Instructions, les Settings Git et la tab Agents sont implémentés.
 - La tab Agents édite `.tasker/agents/main.toml` et les sous-agents TOML, avec découverte locale des modèles via `codex app-server` / `model/list`.
-- Aucune couche scheduler, queue, worker, worktree runner ou exécution Codex n’est encore implémentée.
+- La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/daily/weekly, Run now, un Sheet live et l’historique.
+- Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée.
+- Le succès exige une sortie structurée positive et les contrôles Git ; le worker commit sans push/merge. Les échecs/annulations préservent le worktree. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
 
 ## Direction d’implémentation
 
@@ -52,6 +54,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 
 - Avant toute modification de code Next.js, lire la documentation pertinente dans `node_modules/next/dist/docs/`, car Next.js 16 contient des changements incompatibles avec des conventions plus anciennes.
 - Avant de modifier l’exécution Git, les Runs de tâches, la création de branches ou le comportement des worktrees, lire obligatoirement `docs/git-worktree-architecture.md`.
+- Avant de modifier Tasks, Runs, scheduler, Codex runner ou worktrees, lire obligatoirement `docs/task-runner-architecture.md`. Le schéma des tâches est documenté dans `docs/task-configuration.md`.
 - Avant de modifier la persistance ou la configuration `.tasker/`, consulter `docs/tasker-persistence-architecture.md`.
 - Préserver les fonctionnalités existantes ; après une modification transversale, vérifier chaque système affecté.
 - Ne jamais lire, afficher ou modifier des fichiers `.env*` contenant des secrets. Utiliser exclusivement `.env.example` comme modèle, avec de fausses valeurs. Ajouter une variable seulement pour un secret ou une valeur réellement dépendante de l’environnement.
@@ -67,13 +70,15 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 - `npm run dev` lance l’application sur `http://localhost:5000`.
 - `npm run lint` exécute ESLint.
 - `npm run build` génère la version de production.
+- `npm run typecheck` vérifie TypeScript ; `npm test` lance les tests filesystem, horaires, SQLite, Git et processus sur des fixtures temporaires. Le Node.js utilisé doit correspondre au binaire natif `better-sqlite3` installé.
+- Le runner requiert un serveur Node persistant et Codex authentifié. `DATABASE_PATH` configure la base ; `AGENTTASKER_DATA_DIR` peut définir un runtime externe aux dépôts. `.test-artifacts/` contient les résultats locaux ignorés des smoke tests volontaires.
 
 ## Prochaines étapes
 
-1. Valider le modèle Project / Task / Run et la persistance SQLite/Drizzle.
-2. Construire le runner local avec queue, workers, worktrees et intégration Codex native.
-3. Ajouter les validations déterministes, le suivi live, l’annulation et l’historique.
-4. Ajouter les opérations Git contrôlées : commit, push et PR brouillon optionnelle.
+1. Valider les chemins POSIX du runner sur macOS/Linux (tests d’intégration actuels sous Windows).
+2. Ajouter les validations configurables et, si souhaité, push/PR brouillon contrôlés.
+3. Ajouter une interface de récupération pour les terminaisons non vérifiées, puis la rétention des logs/branches/worktrees.
+4. Étendre les références et les sous-agents personnalisés sans abstraction multi-provider.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

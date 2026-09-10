@@ -17,7 +17,7 @@ providers.
 ## Situation visée
 
 L'interface doit employer les noms et valeurs de configuration natifs de Codex,
-stocker les fichiers source sous `.tasker/agents/`, et permettre au futur
+stocker les fichiers source sous `.tasker/agents/`, et permettre au
 runner de les appliquer à Codex sans couche de traduction inutile. AgentTasker
 ne crée pas d'abstraction multi-provider et ne propose pas Claude, Gemini ou un
 autre fournisseur.
@@ -97,5 +97,7 @@ natifs obligatoires sont `name`, `description` et `developer_instructions`.
 optionnelles; lorsqu'elles sont absentes, Codex applique ses règles d'héritage.
 
 Les fichiers restent sous `.tasker/agents/` parce qu'ils sont la configuration
-portable d'AgentTasker. Le futur runner devra les fournir à Codex comme
-configuration de projet équivalente aux fichiers `.codex/agents/*.toml`.
+portable d'AgentTasker. Le runner V1 fournit les paramètres de `main.toml` à
+`codex exec` via des surcharges natives `-c`; il ne copie pas les fichiers de
+sous-agents personnalisés dans le worktree. Leur orchestration reste une étape
+ultérieure. Voir [l’architecture du runner](task-runner-architecture.md).

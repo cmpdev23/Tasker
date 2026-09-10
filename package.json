@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/run-tests.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node db/migrate.mjs"
   },
@@ -37,6 +39,7 @@
     "eslint-config-next": "16.3.4",
     "shadcn": "^4.21.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   },
   "packageManager": "npm@10.7.0"

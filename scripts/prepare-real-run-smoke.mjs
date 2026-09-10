@@ -1,0 +1,35 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+
+// Disposable local origin and checkout: this script never operates on the application's Git repository.
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "agenttasker-real-"));
+const repo = path.join(root, "checkout");
+const remote = path.join(root, "origin.git");
+const git = (args, cwd = root) => execFileSync("git", args, { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
+git(["init", "--bare", remote]);
+git(["init", "-b", "main", repo]);
+git(["config", "user.name", "AgentTasker Smoke Test"], repo);
+git(["config", "user.email", "smoke@example.invalid"], repo);
+fs.writeFileSync(path.join(repo, "README.md"), "# Disposable AgentTasker smoke repository\n");
+git(["add", "README.md"], repo);
+git(["commit", "-m", "Initial fixture"], repo);
+git(["remote", "add", "origin", remote], repo);
+git(["push", "origin", "main"], repo);
+const initialCommit = git(["rev-parse", "HEAD"], repo);
+git(["switch", "-c", "user-working-branch"], repo);
+fs.writeFileSync(path.join(repo, "local-work.txt"), "Keep this user's uncommitted work unchanged.\n");
+const upstream = path.join(root, "upstream");
+git(["clone", "--branch", "main", remote, upstream]);
+git(["config", "user.name", "AgentTasker Smoke Test"], upstream);
+git(["config", "user.email", "smoke@example.invalid"], upstream);
+fs.writeFileSync(path.join(upstream, "remote-marker.txt"), "Latest remote baseline\n");
+git(["add", "."], upstream);
+git(["commit", "-m", "Advance remote beyond local main"], upstream);
+git(["push", "origin", "main"], upstream);
+const baseCommit = git(["rev-parse", "HEAD"], upstream);
+const fixture = { root, repo, remote, initialCommit, baseCommit, database: path.join(root, "smoke.db"), runtime: path.join(root, "runtime") };
+fs.mkdirSync(".test-artifacts", { recursive: true });
+fs.writeFileSync(".test-artifacts/smoke.json", JSON.stringify(fixture, null, 2));
+console.log(JSON.stringify(fixture, null, 2));

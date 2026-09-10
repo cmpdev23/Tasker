@@ -6,7 +6,7 @@
 
 This document defines how AgentTasker isolates task executions from the user's working repository, how branches are resolved, and why local checkouts are never modified to start a Run.
 
-> **Important:** This document specifies an architectural contract for the future runner and execution engine. This architecture must not be partially implemented until the runner phase officially begins.
+> **Implementation:** The V1 runner now implements this contract. Read `docs/task-runner-architecture.md` for queueing, execution, cancellation, validation and cleanup details.
 
 ---
 
@@ -61,7 +61,7 @@ To ensure safety, repeatability, and non-interference, AgentTasker strictly isol
 
 ---
 
-## 3. Future Runner Workflow
+## 3. Runner Workflow
 
 When a Task becomes runnable in the runner, the execution lifecycle follows this deterministic sequence:
 
@@ -95,7 +95,7 @@ create isolated worktree
 coding agent executes inside worktree
 ```
 
-> **Note:** This workflow represents the architectural blueprint for the future runner. It is not implemented during the initial UI/settings phase.
+> **Note:** This workflow is implemented by the server worker; the current checkout remains untouched.
 
 ---
 
@@ -178,7 +178,7 @@ Benefits:
 - **Diff clarity:** Validation and review tooling can compute diffs against `base_commit` with mathematical certainty, regardless of subsequent updates to `main`.
 - **Debugging:** If a run fails or exhibits unexpected behavior, developers know whether the base commit contained breaking changes.
 
-*(Schema fields for these properties will be added when the Run model and runner SQLite persistence are formally introduced).*
+These fields are persisted on every prepared Run in SQLite.
 
 ---
 

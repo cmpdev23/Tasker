@@ -1,41 +1,35 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-
-## Getting Started
-
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-
 # AgentTasker
+
+## Running the current V1
+
+Install dependencies with `npm install`, then run `npm run dev` and open
+[localhost:5000](http://localhost:5000). Use a persistent local Node.js server,
+Git with a configured commit identity, and an authenticated Codex CLI.
+SQLite migrations run automatically. See `.env.example` for optional local paths.
+
+Register a repository, initialize Tasker in Settings, select its remote base branch,
+configure the principal agent in Agents, then create a Task. Manual, once, daily
+and weekly schedules all use the same persisted queue and single worker.
+The Tasks tab provides editing, deletion, Run now, live logs, cancellation and history.
+
+Runs use the latest remote base in an isolated worktree, verify Codex's structured
+result and Git changes, then create a local commit. No push or merge is performed.
+Failed and cancelled worktrees are retained. The application must remain running
+for scheduling; closing the browser does not stop execution.
+
+Quality commands: `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`.
+Use a Node version compatible with the installed `better-sqlite3` native binary.
+Production runs with `npm run start -- --hostname 127.0.0.1 --port 5000` after building.
+
+Architecture: [Task runner](docs/task-runner-architecture.md),
+[Task configuration](docs/task-configuration.md),
+[Persistence](docs/tasker-persistence-architecture.md),
+[Git isolation](docs/git-worktree-architecture.md),
+[Codex agents](docs/codex-agent-configuration.md).
+
+The sections below describe the broader product vision; optional push/PR,
+configurable validation commands and custom subagent orchestration remain future work.
+
 
 > A local, open-source task orchestrator for coding agents.
 

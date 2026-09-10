@@ -1,6 +1,7 @@
-import { db } from "@db/client";
-import { projects, type Project } from "@db/schema";
-import { eq, desc } from "drizzle-orm";
+import { db, sqlite } from "@db/client";
+import { projects, runs, type Project } from "@db/schema";
+import { eq, desc, and, or, inArray } from "drizzle-orm";
+import { ConflictError } from "../errors";
 
 export interface CreateProjectRepoInput {
   name: string;
@@ -72,11 +73,13 @@ export class ProjectRepository {
   }
 
   async deleteProject(id: string): Promise<boolean> {
-    const [deleted] = await db
-      .delete(projects)
-      .where(eq(projects.id, id))
-      .returning();
-    return Boolean(deleted);
+    return sqlite.transaction(() => {
+      const blocked = db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, id),
+        or(inArray(runs.status, ["QUEUED", "PREPARING", "RUNNING", "VALIDATING"]),
+          eq(runs.terminationVerified, false)))).get();
+      if (blocked) throw new ConflictError("Finish active runs and verify interrupted process termination before deleting the project.");
+      return Boolean(db.delete(projects).where(eq(projects.id, id)).returning().get());
+    }).immediate();
   }
 }
 

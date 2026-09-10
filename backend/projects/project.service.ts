@@ -4,6 +4,15 @@ import {
 } from "./project.repository";
 import { type Project } from "@db/schema";
 import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import { db } from "@db/client";
+import { runs } from "@db/schema";
+import { and, eq, inArray, or } from "drizzle-orm";
+
+function hasActiveRuns(id: string) {
+  return Boolean(db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, id),
+    or(inArray(runs.status, ["QUEUED", "PREPARING", "RUNNING", "VALIDATING"]),
+      eq(runs.terminationVerified, false)))).get());
+}
 
 export interface CreateProjectDTO {
   name: string;
@@ -91,6 +100,10 @@ export class ProjectService {
       throw new NotFoundError(`Project with ID "${id}" was not found.`);
     }
 
+    if (dto.repositoryPath !== undefined && dto.repositoryPath !== existing.repositoryPath && hasActiveRuns(id)) {
+      throw new ConflictError("Finish or cancel active runs before changing the repository.");
+    }
+
     const updateData: {
       name?: string;
       slug?: string;
@@ -144,6 +157,7 @@ export class ProjectService {
       throw new NotFoundError(`Project with ID "${id}" was not found.`);
     }
 
+    if (hasActiveRuns(id)) throw new ConflictError("Finish active runs and verify interrupted process termination before deleting the project.");
     return this.repo.deleteProject(id);
   }
 }

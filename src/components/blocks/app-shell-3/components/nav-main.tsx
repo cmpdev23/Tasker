@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 
@@ -50,16 +50,16 @@ function NavSubItem({ child }: { child: NavChild }) {
 
 function NavSubMenu({
   id,
-  children,
+  items,
   onAddProject,
 }: {
   id: string
-  children: NavChild[]
+  items: NavChild[]
   onAddProject?: () => void
 }) {
   return (
     <SidebarMenuSub id={`subnav-${id}`}>
-      {children.map((child) => (
+      {items.map((child) => (
         <NavSubItem key={child.id} child={child} />
       ))}
       {onAddProject && (
@@ -199,7 +199,7 @@ function ExpandedNavItem({
       {open && (
         <NavSubMenu
           id={item.id}
-          children={item.children}
+          items={item.children}
           onAddProject={onAddProject}
         />
       )}
@@ -223,11 +223,16 @@ function CollapsibleNavItem({
     () => hasActiveChild || item.children.some((c) => c.isActive) || item.id === "projects"
   )
 
-  useEffect(() => {
+  const [previousHasActiveChild, setPreviousHasActiveChild] = useState(hasActiveChild)
+
+  // Reopen only when entering this group. Manual collapse while a child stays
+  // active, and the open state when leaving the group, remain user-controlled.
+  if (previousHasActiveChild !== hasActiveChild) {
+    setPreviousHasActiveChild(hasActiveChild)
     if (hasActiveChild) {
       setOpen(true)
     }
-  }, [hasActiveChild])
+  }
 
   return state === "collapsed" ? (
     <CollapsedNavItem item={item} onAddProject={onAddProject} />

@@ -76,6 +76,9 @@ export async function DELETE(
     if (error instanceof ValidationError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
+    if (error instanceof ConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error("DELETE /api/projects/[id] error:", error);
     return NextResponse.json(
       { error: "Internal server error." },

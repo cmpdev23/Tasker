@@ -26,26 +26,33 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshProjects = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const res = await fetch("/api/projects");
+  const loadProjects = useCallback((signal?: AbortSignal) => {
+    return fetch("/api/projects", { signal }).then(async (res) => {
       if (!res.ok) {
         throw new Error("Failed to fetch projects");
       }
       const data = await res.json();
+      if (signal?.aborted) return;
       setProjects(data);
-    } catch (err: unknown) {
+    }).catch((err: unknown) => {
+      if (signal?.aborted) return;
       setError(err instanceof Error ? err.message : "An error occurred");
-    } finally {
-      setIsLoading(false);
-    }
+    }).finally(() => {
+      if (!signal?.aborted) setIsLoading(false);
+    });
   }, []);
 
+  const refreshProjects = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    await loadProjects();
+  }, [loadProjects]);
+
   useEffect(() => {
-    refreshProjects();
-  }, [refreshProjects]);
+    const controller = new AbortController();
+    void loadProjects(controller.signal);
+    return () => controller.abort();
+  }, [loadProjects]);
 
   const createProject = useCallback(
     async (name: string): Promise<ProjectItem> => {

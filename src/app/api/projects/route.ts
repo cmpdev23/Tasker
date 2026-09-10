@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { projectService } from "@backend/projects/project.service";
-import { ValidationError, ConflictError, NotFoundError } from "@backend/errors";
+import { ValidationError, ConflictError } from "@backend/errors";
 
 export async function GET() {
   try {

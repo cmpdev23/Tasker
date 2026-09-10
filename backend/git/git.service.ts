@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { runGitEnvironment } from "./git-environment";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,6 +21,27 @@ export interface GitRepositoryInspection {
 }
 
 export class GitService {
+  /** Run an argument-vector Git command without a shell. Runtime callers own policy. */
+  async run(
+    repoPath: string,
+    args: readonly string[],
+    options: { signal?: AbortSignal; timeoutMs?: number } = {}
+  ): Promise<{ stdout: string; stderr: string }> {
+    // Ambient Git routing variables must never redirect a run to another checkout/index.
+    const env = runGitEnvironment();
+    env.GIT_TERMINAL_PROMPT = "0";
+    return execFileAsync("git", [...args], {
+      cwd: repoPath,
+      env,
+      shell: false,
+      windowsHide: true,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: options.timeoutMs ?? 120_000,
+      signal: options.signal,
+    });
+  }
+
   async isGitAvailable(): Promise<boolean> {
     try {
       await execFileAsync("git", ["--version"]);

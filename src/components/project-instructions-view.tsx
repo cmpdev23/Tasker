@@ -27,35 +27,29 @@ interface ProjectInstructionsViewProps {
   onNavigateToSettings?: () => void;
 }
 
-export function ProjectInstructionsView({
+export function ProjectInstructionsView(props: ProjectInstructionsViewProps) {
+  return <InstructionsEditor key={`${props.project.id}:${props.project.repositoryPath}`} {...props} />;
+}
+
+function InstructionsEditor({
   project,
   onNavigateToSettings,
 }: ProjectInstructionsViewProps) {
   const [instructions, setInstructions] = useState<string>("");
   const [initialInstructions, setInitialInstructions] = useState<string>("");
   const [filePath, setFilePath] = useState<string>(".tasker/instructions.md");
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(Boolean(project.repositoryPath));
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<
     "NO_REPOSITORY" | "NOT_INITIALIZED" | "FETCH_ERROR" | null
-  >(null);
+  >(project.repositoryPath ? null : "NO_REPOSITORY");
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
 
-  const fetchInstructions = useCallback(async () => {
-    if (!project.repositoryPath) {
-      setErrorCode("NO_REPOSITORY");
-      setIsLoading(false);
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    setErrorCode(null);
-
-    try {
-      const res = await fetch(`/api/projects/${project.id}/instructions`);
+  const fetchInstructions = useCallback((signal?: AbortSignal) => {
+    return fetch(`/api/projects/${project.id}/instructions`, { signal }).then(async (res) => {
       const data = await res.json();
+      if (signal?.aborted) return;
 
       if (!res.ok) {
         if (data.code === "NO_REPOSITORY" || data.code === "NOT_INITIALIZED") {
@@ -67,10 +61,13 @@ export function ProjectInstructionsView({
 
       setInstructions(data.instructions ?? "");
       setInitialInstructions(data.instructions ?? "");
+      setError(null);
+      setErrorCode(null);
       if (data.filePath) {
         setFilePath(data.filePath);
       }
-    } catch (err: unknown) {
+    }).catch((err: unknown) => {
+      if (signal?.aborted) return;
       console.error("fetchInstructions error:", err);
       const message =
         err instanceof Error
@@ -78,14 +75,24 @@ export function ProjectInstructionsView({
           : "Impossible de charger les instructions du projet.";
       setError(message);
       setErrorCode("FETCH_ERROR");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [project.id, project.repositoryPath]);
+    }).finally(() => {
+      if (!signal?.aborted) setIsLoading(false);
+    });
+  }, [project.id]);
 
   useEffect(() => {
-    fetchInstructions();
-  }, [fetchInstructions]);
+    if (!project.repositoryPath) return;
+    const controller = new AbortController();
+    void fetchInstructions(controller.signal);
+    return () => controller.abort();
+  }, [fetchInstructions, project.repositoryPath]);
+
+  const retryInstructions = () => {
+    setIsLoading(true);
+    setError(null);
+    setErrorCode(null);
+    void fetchInstructions();
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -263,7 +270,7 @@ export function ProjectInstructionsView({
             <Button
               type="button"
               variant="outline"
-              onClick={fetchInstructions}
+              onClick={retryInstructions}
               className="gap-2"
             >
               <RefreshCwIcon className="size-4" />

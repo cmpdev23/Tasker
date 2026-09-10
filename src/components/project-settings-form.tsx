@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { type Project } from "@db/schema";
 import {
   Frame,
@@ -63,42 +63,41 @@ export function ProjectSettingsForm({
   const [selectedDefaultBranch, setSelectedDefaultBranch] = useState<string>(
     initialProject.defaultBranch || "main"
   );
-  const [isLoadingInspection, setIsLoadingInspection] = useState(false);
+  const [isLoadingInspection, setIsLoadingInspection] = useState(Boolean(initialProject.repositoryPath));
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [isInitializingTasker, setIsInitializingTasker] = useState(false);
   const [isSavingPath, setIsSavingPath] = useState(false);
 
   // Load Git inspection whenever project.repositoryPath is available
-  const fetchGitInspection = async (path?: string) => {
-    setIsLoadingInspection(true);
-    try {
-      const url = path !== undefined
-        ? `/api/projects/${project.id}/git?path=${encodeURIComponent(path)}`
-        : `/api/projects/${project.id}/git`;
-      const res = await fetch(url);
+  const fetchGitInspection = useCallback((path?: string, signal?: AbortSignal) => {
+    const url = path !== undefined
+      ? `/api/projects/${project.id}/git?path=${encodeURIComponent(path)}`
+      : `/api/projects/${project.id}/git`;
+    return fetch(url, { signal }).then(async (res) => {
       if (!res.ok) {
         throw new Error("Failed to inspect repository.");
       }
       const data = await res.json();
+      if (signal?.aborted) return;
       setInspection(data.inspection);
       if (data.effectiveDefaultBranch) {
         setSelectedDefaultBranch(data.effectiveDefaultBranch);
       }
-    } catch (err) {
+    }).catch((err: unknown) => {
+      if (signal?.aborted) return;
       console.error(err);
       toast.error("Error checking Git repository status.");
-    } finally {
-      setIsLoadingInspection(false);
-    }
-  };
+    }).finally(() => {
+      if (!signal?.aborted) setIsLoadingInspection(false);
+    });
+  }, [project.id]);
 
   useEffect(() => {
-    if (project.repositoryPath) {
-      fetchGitInspection();
-    } else {
-      setInspection(null);
-    }
-  }, [project.repositoryPath]);
+    if (!project.repositoryPath) return;
+    const controller = new AbortController();
+    void fetchGitInspection(undefined, controller.signal);
+    return () => controller.abort();
+  }, [project.repositoryPath, fetchGitInspection]);
 
   // Handle Browse button
   const handleBrowseFolder = async () => {
@@ -151,13 +150,19 @@ export function ProjectSettingsForm({
       }
 
       const updatedProject = await res.json();
+      setIsLoadingInspection(Boolean(updatedProject.repositoryPath));
+      if (!updatedProject.repositoryPath) setInspection(null);
       setProject(updatedProject);
       if (onProjectUpdate) {
         onProjectUpdate(updatedProject);
       }
 
       toast.success("Repository path updated.");
-      await fetchGitInspection(updatedProject.repositoryPath || "");
+      // A changed path is inspected by the effect; a same-path save still
+      // explicitly refreshes its Git status (e.g. selecting the folder again).
+      if (updatedProject.repositoryPath && updatedProject.repositoryPath === project.repositoryPath) {
+        await fetchGitInspection(updatedProject.repositoryPath);
+      }
     } catch (err: unknown) {
       console.error(err);
       toast.error(

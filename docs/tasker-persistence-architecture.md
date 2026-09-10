@@ -241,6 +241,11 @@ This keeps prompts easy to read, edit, diff, and review.
 
 ## 7. Task configuration
 
+The implemented V1 schema is specified in [Task configuration](task-configuration.md).
+It supports manual/once/daily/weekly schedules and `expect_changes`; the richer
+example below describes future extensions. Runtime tables and lifecycle are
+documented in [Task runner architecture](task-runner-architecture.md).
+
 Each task gets its own directory.
 
 Example:

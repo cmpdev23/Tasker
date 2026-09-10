@@ -15,16 +15,14 @@ function initDatabase() {
 
   const sqlite = new Database(DB_PATH);
   sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("busy_timeout = 5000");
+  sqlite.pragma("foreign_keys = ON");
 
   const db = drizzle(sqlite, { schema });
 
   const migrationsFolder = path.join(process.cwd(), "db", "migrations");
   if (fs.existsSync(migrationsFolder)) {
-    try {
-      migrate(db, { migrationsFolder });
-    } catch (err) {
-      console.error("[Database] Migration execution failed:", err);
-    }
+    migrate(db, { migrationsFolder });
   }
 
   return { db, sqlite };
@@ -36,9 +34,7 @@ const globalForDb = globalThis as unknown as {
 
 const instance = globalForDb._dbInstance ?? initDatabase();
 
-if (process.env.NODE_ENV !== "production") {
-  globalForDb._dbInstance = instance;
-}
+globalForDb._dbInstance = instance;
 
 export const db = instance.db;
 export const sqlite = instance.sqlite;

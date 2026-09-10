@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { projectService } from "../projects/project.service";
 import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import { quoteToml, sectionContent, topLevelContent, readString, readBoolean, readInteger } from "../tasks/toml";
 import {
   CODEX_APPROVAL_POLICIES,
   CODEX_REASONING_EFFORTS,
@@ -37,64 +38,6 @@ export const DEFAULT_MAIN_CODEX_CONFIG: MainCodexAgentConfig = {
 };
 
 const AGENT_ID_PATTERN = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/;
-
-function quoteToml(value: string): string {
-  return JSON.stringify(value.replace(/\r\n/g, "\n"));
-}
-
-function sectionContent(content: string, sectionName: string): string {
-  const lines = content.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === `[${sectionName}]`);
-  if (start === -1) return "";
-  const endOffset = lines
-    .slice(start + 1)
-    .findIndex((line) => /^\s*\[.+]\s*$/.test(line));
-  const end = endOffset === -1 ? lines.length : start + 1 + endOffset;
-  return lines.slice(start + 1, end).join("\n");
-}
-
-function topLevelContent(content: string): string {
-  const sectionStart = content.search(/^\s*\[.+]\s*$/m);
-  return sectionStart === -1 ? content : content.slice(0, sectionStart);
-}
-
-function readString(source: string, key: string): string | undefined {
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const multiline = source.match(
-    new RegExp(`^\\s*${escapedKey}\\s*=\\s*(?:\"\"\"([\\s\\S]*?)\"\"\"|'''([\\s\\S]*?)''')`, "m")
-  );
-  if (multiline) {
-    return (multiline[1] ?? multiline[2] ?? "").replace(/^\r?\n/, "");
-  }
-
-  const match = source.match(
-    new RegExp(`^\\s*${escapedKey}\\s*=\\s*(\"(?:\\\\.|[^\"\\\\])*\"|'[^']*')\\s*(?:#.*)?$`, "m")
-  );
-  if (!match) return undefined;
-  const token = match[1];
-  if (token.startsWith("'")) return token.slice(1, -1);
-  try {
-    return JSON.parse(token) as string;
-  } catch {
-    throw new ValidationError(`Invalid TOML string for "${key}".`);
-  }
-}
-
-function readBoolean(source: string, key: string): boolean | undefined {
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(
-    new RegExp(`^\\s*${escapedKey}\\s*=\\s*(true|false)\\s*(?:#.*)?$`, "m")
-  );
-  return match ? match[1] === "true" : undefined;
-}
-
-function readInteger(source: string, key: string): number | undefined {
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(
-    new RegExp(`^\\s*${escapedKey}\\s*=\\s*([0-9]+)\\s*(?:#.*)?$`, "m")
-  );
-  return match ? Number.parseInt(match[1], 10) : undefined;
-}
 
 function isEnumValue<T extends readonly string[]>(
   value: string | undefined,
