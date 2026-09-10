@@ -49,6 +49,8 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 ## Règles de développement
 
 - Avant toute modification de code Next.js, lire la documentation pertinente dans `node_modules/next/dist/docs/`, car Next.js 16 contient des changements incompatibles avec des conventions plus anciennes.
+- Avant de modifier l’exécution Git, les Runs de tâches, la création de branches ou le comportement des worktrees, lire obligatoirement `docs/git-worktree-architecture.md`.
+- Avant de modifier la persistance ou la configuration `.tasker/`, consulter `docs/tasker-persistence-architecture.md`.
 - Préserver les fonctionnalités existantes ; après une modification transversale, vérifier chaque système affecté.
 - Ne jamais lire, afficher ou modifier des fichiers `.env*` contenant des secrets. Utiliser exclusivement `.env.example` comme modèle, avec de fausses valeurs. Ajouter une variable seulement pour un secret ou une valeur réellement dépendante de l’environnement.
 - Ne jamais mettre `REUI_LICENSE_KEY` dans le code, un fichier versionné ou une documentation contenant une valeur. Si l’accès ReUI Premium est en cause, seulement vérifier sa présence, jamais sa valeur.

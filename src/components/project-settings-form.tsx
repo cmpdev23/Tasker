@@ -168,8 +168,8 @@ export function ProjectSettingsForm({
     }
   };
 
-  // Handle changing default branch
-  const handleDefaultBranchChange = async (newBranch: string) => {
+  // Handle changing base branch
+  const handleBaseBranchChange = async (newBranch: string) => {
     setSelectedDefaultBranch(newBranch);
     try {
       const res = await fetch(`/api/projects/${project.id}`, {
@@ -181,7 +181,7 @@ export function ProjectSettingsForm({
       });
 
       if (!res.ok) {
-        throw new Error("Failed to save default branch.");
+        throw new Error("Failed to save base branch.");
       }
 
       const updatedProject = await res.json();
@@ -190,10 +190,10 @@ export function ProjectSettingsForm({
         onProjectUpdate(updatedProject);
       }
 
-      toast.success(`Default branch set to "${newBranch}".`);
+      toast.success(`Base branch set to "${newBranch}".`);
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update default branch.");
+      toast.error("Failed to update base branch.");
     }
   };
 
@@ -464,17 +464,17 @@ export function ProjectSettingsForm({
 
               <Separator />
 
-              {/* Default branch dropdown */}
-              <div className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 items-center">
+              {/* Base branch dropdown */}
+              <div className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 items-start sm:items-center">
                 <dt className="text-muted-foreground text-sm font-medium">
-                  Default branch
+                  Base branch
                 </dt>
-                <dd className="text-foreground text-sm">
+                <dd className="text-foreground text-sm flex flex-col gap-1.5">
                   {branchOptions.length > 0 ? (
                     <Select
                       value={selectedDefaultBranch}
                       onValueChange={(val) => {
-                        if (val) handleDefaultBranchChange(val);
+                        if (val) handleBaseBranchChange(val);
                       }}
                     >
                       <SelectTrigger className="w-48 font-mono text-xs">
@@ -499,6 +499,9 @@ export function ProjectSettingsForm({
                       No branches found
                     </span>
                   )}
+                  <p className="text-xs text-muted-foreground">
+                    Branch used as the starting point for new task worktrees.
+                  </p>
                 </dd>
               </div>
             </dl>
