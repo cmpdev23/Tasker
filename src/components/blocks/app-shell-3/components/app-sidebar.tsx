@@ -5,6 +5,7 @@ import {
   SidebarHeader,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import Link from "next/link"
 
 import { Logo } from "./logo"
 import { NavMain } from "./nav-main"
@@ -17,12 +18,15 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" variant="inset">
       {/* Header */}
       <SidebarHeader className="flex flex-row items-center justify-between in-data-[state=collapsed]:flex-col in-data-[state=collapsed]:items-start in-data-[state=collapsed]:justify-center">
-        <div className="inline-flex min-h-10 items-center gap-2 px-0.5 transition-all duration-200 ease-linear">
+        <Link
+          href="/"
+          className="inline-flex min-h-10 items-center gap-2 px-0.5 transition-all duration-200 ease-linear hover:opacity-80"
+        >
           <Logo />
           <span className="text-sm font-medium in-data-[state=collapsed]:hidden">
             CodexTasker
           </span>
-        </div>
+        </Link>
 
         <div className="inline-flex items-center gap-0.5 in-data-[state=collapsed]:flex-col">
           <NotificationsPopover />

@@ -6,6 +6,7 @@ import { FolderIcon, SquareCheckIcon, ExternalLinkIcon, UserPlusIcon, FlagIcon, 
 export type NavChild = {
   id: string
   label: string
+  url?: string
   isActive?: boolean
 }
 
@@ -13,6 +14,7 @@ export type NavItem = {
   id: string
   label: string
   icon: ReactNode
+  url?: string
   isActive?: boolean
   children?: NavChild[]
 }
@@ -70,7 +72,9 @@ export const NAV_MAIN: NavItem[] = [
     icon: (
       <FolderIcon aria-hidden="true" />
     ),
-    isActive: true,
+    children: [
+      { id: "cmt", label: "cmt", url: "/cmt" },
+    ],
   },
   {
     id: "tasks",
@@ -78,6 +82,7 @@ export const NAV_MAIN: NavItem[] = [
     icon: (
       <SquareCheckIcon aria-hidden="true" />
     ),
+    url: "#",
   },
 ]
 

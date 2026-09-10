@@ -1,3 +1,8 @@
+"use client"
+
+import { type ReactNode } from "react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
   Breadcrumb,
@@ -16,7 +21,10 @@ import { AppSidebar } from "./app-sidebar"
 import { BulletSeparator } from "./bullet-separator"
 import { HouseIcon } from "lucide-react"
 
-export function AppShell() {
+export function AppShell({ children }: { children?: ReactNode }) {
+  const pathname = usePathname()
+  const isCmt = pathname === "/cmt"
+
   return (
     <SidebarProvider
       className={cn(
@@ -48,7 +56,7 @@ export function AppShell() {
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden items-center md:flex">
                   <BreadcrumbLink
-                    href="#"
+                    render={<Link href="/" />}
                     className="flex items-center gap-1.5"
                   >
                     <HouseIcon className="size-4" aria-hidden="true" />
@@ -58,20 +66,29 @@ export function AppShell() {
                 <BreadcrumbSeparator className="hidden items-center md:flex">
                   <BulletSeparator />
                 </BreadcrumbSeparator>
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Overview</BreadcrumbPage>
-                </BreadcrumbItem>
+                {isCmt ? (
+                  <>
+                    <BreadcrumbItem className="hidden items-center md:flex">
+                      <span>Projects</span>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator className="hidden items-center md:flex">
+                      <BulletSeparator />
+                    </BreadcrumbSeparator>
+                    <BreadcrumbItem>
+                      <BreadcrumbPage>cmt</BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                ) : (
+                  <BreadcrumbItem>
+                    <BreadcrumbPage>Overview</BreadcrumbPage>
+                  </BreadcrumbItem>
+                )}
               </BreadcrumbList>
             </Breadcrumb>
           </div>
         </header>
         <div className="flex flex-1 flex-col gap-4 px-4 pb-4">
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="bg-muted/40 border-border/40 aspect-video rounded-lg border" />
-            <div className="bg-muted/40 border-border/40 aspect-video rounded-lg border" />
-            <div className="bg-muted/40 border-border/40 aspect-video rounded-lg border" />
-          </div>
-          <div className="bg-muted/40 border-border/40 h-full rounded-lg border" />
+          {children}
         </div>
       </SidebarInset>
     </SidebarProvider>

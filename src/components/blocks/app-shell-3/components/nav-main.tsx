@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
 
 import { cn } from "@/lib/utils"
 import {
@@ -27,10 +29,16 @@ import { NAV_MAIN, type NavChild, type NavItem } from "./data"
 import { ChevronRightIcon } from "lucide-react"
 
 function NavSubItem({ child }: { child: NavChild }) {
+  const pathname = usePathname()
+  const isActive = child.url ? pathname === child.url : child.isActive
+
   return (
     <SidebarMenuSubItem>
       {/* Sidebar */}
-      <SidebarMenuSubButton render={<a href="#" />} isActive={child.isActive}>
+      <SidebarMenuSubButton
+        render={<Link href={child.url || "#"} />}
+        isActive={isActive}
+      >
         <span>{child.label}</span>
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
@@ -57,6 +65,11 @@ function CollapsedNavItem({
 }: {
   item: NavItem & { children: NavChild[] }
 }) {
+  const pathname = usePathname()
+  const hasActiveChild = item.children.some((c) =>
+    c.url ? pathname === c.url : c.isActive
+  )
+
   return (
     <SidebarMenuItem>
       {/* Sidebar */}
@@ -65,7 +78,7 @@ function CollapsedNavItem({
           render={
             <SidebarMenuButton
               tooltip={item.label}
-              isActive={item.isActive}
+              isActive={item.isActive || hasActiveChild}
               aria-label={item.label}
             />
           }
@@ -82,7 +95,10 @@ function CollapsedNavItem({
           <DropdownMenuGroup>
             <DropdownMenuLabel>{item.label}</DropdownMenuLabel>
             {item.children.map((child) => (
-              <DropdownMenuItem key={child.id} render={<a href="#" />}>
+              <DropdownMenuItem
+                key={child.id}
+                render={<Link href={child.url || "#"} />}
+              >
                 {child.label}
               </DropdownMenuItem>
             ))}
@@ -103,12 +119,17 @@ function ExpandedNavItem({
   open: boolean
   onToggle: () => void
 }) {
+  const pathname = usePathname()
+  const hasActiveChild = item.children.some((c) =>
+    c.url ? pathname === c.url : c.isActive
+  )
+
   return (
     <SidebarMenuItem>
       {/* Sidebar */}
       <SidebarMenuButton
         tooltip={item.label}
-        isActive={item.isActive}
+        isActive={item.isActive || hasActiveChild}
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={`subnav-${item.id}`}
@@ -132,9 +153,19 @@ function CollapsibleNavItem({
   item: NavItem & { children: NavChild[] }
 }) {
   const { state } = useSidebar()
+  const pathname = usePathname()
+  const hasActiveChild = item.children.some((c) =>
+    c.url ? pathname === c.url : c.isActive
+  )
   // Kept on the always-mounted parent so the expanded open state survives a
   // collapse/expand cycle instead of resetting when the branch swaps.
-  const [open, setOpen] = useState(() => item.children.some((c) => c.isActive))
+  const [open, setOpen] = useState(() => hasActiveChild || item.children.some((c) => c.isActive))
+
+  useEffect(() => {
+    if (hasActiveChild) {
+      setOpen(true)
+    }
+  }, [hasActiveChild])
 
   return state === "collapsed" ? (
     <CollapsedNavItem item={item} />
@@ -148,13 +179,16 @@ function CollapsibleNavItem({
 }
 
 function LeafNavItem({ item }: { item: NavItem }) {
+  const pathname = usePathname()
+  const isActive = item.url ? pathname === item.url : item.isActive
+
   return (
     <SidebarMenuItem>
       {/* Sidebar */}
       <SidebarMenuButton
         tooltip={item.label}
-        isActive={item.isActive}
-        render={<a href="#" />}
+        isActive={isActive}
+        render={<Link href={item.url || "#"} />}
       >
         {item.icon}
         <span>{item.label}</span>
