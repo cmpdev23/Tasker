@@ -6,12 +6,14 @@ export interface CreateProjectRepoInput {
   name: string;
   slug: string;
   repositoryPath?: string | null;
+  defaultBranch?: string | null;
 }
 
 export interface UpdateProjectRepoInput {
   name?: string;
   slug?: string;
   repositoryPath?: string | null;
+  defaultBranch?: string | null;
 }
 
 export class ProjectRepository {
@@ -36,6 +38,7 @@ export class ProjectRepository {
         name: input.name,
         slug: input.slug,
         repositoryPath: input.repositoryPath ?? null,
+        defaultBranch: input.defaultBranch ?? null,
       })
       .returning();
     return created;
@@ -54,6 +57,9 @@ export class ProjectRepository {
     }
     if (input.repositoryPath !== undefined) {
       updateValues.repositoryPath = input.repositoryPath;
+    }
+    if (input.defaultBranch !== undefined) {
+      updateValues.defaultBranch = input.defaultBranch;
     }
 
     const [updated] = await db

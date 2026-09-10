@@ -8,6 +8,13 @@
       "when": 1789060883623,
       "tag": "0000_left_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789063712144,
+      "tag": "0001_mute_yellowjacket",
+      "breakpoints": true
     }
   ]
 }

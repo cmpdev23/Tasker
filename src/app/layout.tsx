@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/blocks/app-shell-3/components/app-shell";
 import { ProjectsProvider } from "@/contexts/projects-context";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -42,6 +43,7 @@ export default function RootLayout({
           <TooltipProvider>
             <ProjectsProvider>
               <AppShell>{children}</AppShell>
+              <Toaster position="bottom-right" richColors />
             </ProjectsProvider>
           </TooltipProvider>
         </ThemeProvider>

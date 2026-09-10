@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { projectService } from "@backend/projects/project.service";
+import { taskerService } from "@backend/tasker/tasker.service";
 import { ValidationError, ConflictError, NotFoundError } from "@backend/errors";
 
 export async function GET(
@@ -36,7 +37,11 @@ export async function PATCH(
       name: body.name,
       slug: body.slug,
       repositoryPath: body.repositoryPath,
+      defaultBranch: body.defaultBranch,
     });
+    if (body.defaultBranch && updated.repositoryPath) {
+      taskerService.updateProjectTomlBaseBranch(updated.repositoryPath, body.defaultBranch);
+    }
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof NotFoundError) {

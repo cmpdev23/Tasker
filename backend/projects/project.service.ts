@@ -8,12 +8,14 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors";
 export interface CreateProjectDTO {
   name: string;
   repositoryPath?: string | null;
+  defaultBranch?: string | null;
 }
 
 export interface UpdateProjectDTO {
   name?: string;
   slug?: string;
   repositoryPath?: string | null;
+  defaultBranch?: string | null;
 }
 
 export function slugify(text: string): string {
@@ -93,6 +95,7 @@ export class ProjectService {
       name?: string;
       slug?: string;
       repositoryPath?: string | null;
+      defaultBranch?: string | null;
     } = {};
 
     if (dto.name !== undefined) {
@@ -118,6 +121,10 @@ export class ProjectService {
 
     if (dto.repositoryPath !== undefined) {
       updateData.repositoryPath = dto.repositoryPath ? dto.repositoryPath.trim() : null;
+    }
+
+    if (dto.defaultBranch !== undefined) {
+      updateData.defaultBranch = dto.defaultBranch ? dto.defaultBranch.trim() : null;
     }
 
     const updated = await this.repo.updateProject(id, updateData);
