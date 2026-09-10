@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/blocks/app-shell-3/components/app-shell";
 import { ProjectsProvider } from "@/contexts/projects-context";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,13 +30,21 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
-        <TooltipProvider>
-          <ProjectsProvider>
-            <AppShell>{children}</AppShell>
-          </ProjectsProvider>
-        </TooltipProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <TooltipProvider>
+            <ProjectsProvider>
+              <AppShell>{children}</AppShell>
+            </ProjectsProvider>
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
