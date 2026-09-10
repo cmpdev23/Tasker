@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { gitService } from "../git/git.service";
+import { projectService } from "../projects/project.service";
 import { ValidationError, ConflictError } from "../errors";
 
 export interface InitTaskerOptions {
@@ -8,6 +9,20 @@ export interface InitTaskerOptions {
   projectName: string;
   baseBranch: string;
 }
+
+export const DEFAULT_INSTRUCTIONS = `# Instructions du projet
+
+Tu travailles sur ce projet en tant qu'agent de développement.
+
+## Instructions générales
+
+- Lis et comprends le projet avant d'effectuer des modifications.
+- Respecte l'architecture et les conventions existantes.
+- Réutilise les composants et les fonctionnalités existantes lorsque possible.
+- Évite les modifications qui ne sont pas nécessaires à la tâche demandée.
+- Garde les changements simples, ciblés et maintenables.
+- Vérifie ton travail avant de terminer.
+`;
 
 export class TaskerService {
   async initTasker(options: InitTaskerOptions): Promise<void> {
@@ -56,8 +71,74 @@ base_branch = "${baseBranch.trim()}"
     fs.writeFileSync(path.join(taskerDir, "project.toml"), projectTomlContent, "utf-8");
 
     // Create .tasker/instructions.md
-    const instructionsContent = `# Project Instructions\n`;
-    fs.writeFileSync(path.join(taskerDir, "instructions.md"), instructionsContent, "utf-8");
+    fs.writeFileSync(path.join(taskerDir, "instructions.md"), DEFAULT_INSTRUCTIONS, "utf-8");
+  }
+
+  async getProjectInstructions(projectId: string): Promise<{ instructions: string; filePath: string }> {
+    const project = await projectService.getProjectById(projectId);
+
+    if (!project.repositoryPath || !project.repositoryPath.trim()) {
+      throw new ValidationError("NO_REPOSITORY: Configurez d'abord le repository du projet dans Settings.");
+    }
+
+    const normalizedPath = path.resolve(project.repositoryPath.trim());
+    const taskerDir = path.join(normalizedPath, ".tasker");
+
+    if (!fs.existsSync(taskerDir) || !fs.statSync(taskerDir).isDirectory()) {
+      throw new ValidationError("NOT_INITIALIZED: Initialisez Tasker dans Settings avant de configurer les instructions.");
+    }
+
+    const instructionsPath = path.join(taskerDir, "instructions.md");
+
+    if (!fs.existsSync(instructionsPath)) {
+      fs.writeFileSync(instructionsPath, DEFAULT_INSTRUCTIONS, "utf-8");
+      return {
+        instructions: DEFAULT_INSTRUCTIONS,
+        filePath: ".tasker/instructions.md",
+      };
+    }
+
+    const rawContent = fs.readFileSync(instructionsPath, "utf-8");
+    const trimmed = rawContent.trim();
+    const effectiveContent =
+      trimmed === "" || trimmed === "# Project Instructions"
+        ? DEFAULT_INSTRUCTIONS
+        : rawContent;
+
+    return {
+      instructions: effectiveContent,
+      filePath: ".tasker/instructions.md",
+    };
+  }
+
+  async updateProjectInstructions(
+    projectId: string,
+    content: string
+  ): Promise<{ instructions: string; filePath: string }> {
+    if (typeof content !== "string") {
+      throw new ValidationError("Instructions content must be a string.");
+    }
+
+    const project = await projectService.getProjectById(projectId);
+
+    if (!project.repositoryPath || !project.repositoryPath.trim()) {
+      throw new ValidationError("NO_REPOSITORY: Configurez d'abord le repository du projet dans Settings.");
+    }
+
+    const normalizedPath = path.resolve(project.repositoryPath.trim());
+    const taskerDir = path.join(normalizedPath, ".tasker");
+
+    if (!fs.existsSync(taskerDir) || !fs.statSync(taskerDir).isDirectory()) {
+      throw new ValidationError("NOT_INITIALIZED: Initialisez Tasker dans Settings avant de configurer les instructions.");
+    }
+
+    const instructionsPath = path.join(taskerDir, "instructions.md");
+    fs.writeFileSync(instructionsPath, content, "utf-8");
+
+    return {
+      instructions: content,
+      filePath: ".tasker/instructions.md",
+    };
   }
 
   updateProjectTomlBaseBranch(repoPath: string, newBaseBranch: string): boolean {
