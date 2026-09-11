@@ -86,6 +86,90 @@ test("manual recovery only releases a terminal run with no remaining process ide
   assert.throws(() => fixture.runService.confirmTermination(project.id, identified.id), /process identity/i);
 });
 
+test("unverified termination lookup identifies the run that blocks the queue", async () => {
+  const project = await fixture.project();
+  const oldest = fixture.runRepository.create(project.id, "oldest", "Oldest blocker");
+  const newest = fixture.runRepository.create(project.id, "newest", "Newest blocker");
+  fixture.runRepository.update(oldest.id, {
+    status: "FAILED", terminationVerified: false, createdAt: "2026-09-10T10:00:00.000Z",
+  });
+  fixture.runRepository.update(newest.id, {
+    status: "FAILED", terminationVerified: false, createdAt: "2026-09-10T11:00:00.000Z",
+  });
+
+  assert.equal(fixture.runRepository.unverifiedTermination()?.id, oldest.id);
+  assert.equal(fixture.runRepository.hasUnverifiedTermination(), true);
+  fixture.runRepository.update(oldest.id, { terminationVerified: true });
+  assert.equal(fixture.runRepository.unverifiedTermination()?.id, newest.id);
+});
+
+test("queue status explains position, active work, and terminal recovery blockers", async () => {
+  const project = await fixture.project();
+  const active = fixture.runRepository.create(project.id, "active", "Active work");
+  const queued = fixture.runRepository.create(project.id, "queued", "Queued work");
+  fixture.runRepository.claim();
+
+  assert.deepEqual(fixture.runRepository.queueStatus(queued.id), {
+    state: "RUNNING",
+    queuedCount: 1,
+    position: 1,
+    blocker: {
+      id: active.id, projectId: project.id, taskId: active.taskId, taskName: active.taskName,
+      status: "PREPARING", queuedAt: active.queuedAt, startedAt: fixture.runRepository.get(project.id, active.id).startedAt,
+      codexPid: null,
+    },
+    canRecover: false,
+  });
+
+  fixture.runRepository.update(active.id, { status: "FAILED", terminationVerified: false });
+  const blocked = fixture.runRepository.queueStatus(queued.id);
+  assert.equal(blocked.state, "BLOCKED_RECOVERY");
+  assert.equal(blocked.blocker?.id, active.id);
+  assert.equal(blocked.canRecover, true);
+  fixture.runRepository.remove(queued.id);
+  const recoveryRequired = fixture.runRepository.queueStatus();
+  assert.equal(recoveryRequired.state, "RECOVERY_REQUIRED");
+  assert.equal(recoveryRequired.queuedCount, 0);
+  assert.equal(recoveryRequired.blocker?.id, active.id);
+});
+
+test("run removal supports direct confirmed deletion of an unverified terminal blocker", async () => {
+  const project = await fixture.project();
+  const queued = fixture.runRepository.create(project.id, "queued", "Queued");
+  const queuedEvent = fixture.runRepository.events(queued.id)[0];
+  assert.equal((await fixture.runService.remove(project.id, queued.id)).id, queued.id);
+  assert.throws(() => fixture.runRepository.get(project.id, queued.id), /not found/i);
+  assert.deepEqual(fixture.runRepository.events(queued.id), []);
+  assert.ok(queuedEvent);
+
+  const cancelled = fixture.runRepository.create(project.id, "cancelled", "Cancelled");
+  fixture.runService.cancel(project.id, cancelled.id);
+  assert.equal((await fixture.runService.remove(project.id, cancelled.id)).status, "CANCELLED");
+
+  const running = fixture.runRepository.create(project.id, "running", "Running");
+  fixture.runRepository.claim();
+  await assert.rejects(fixture.runService.remove(project.id, running.id), /annulez/i);
+  fixture.runRepository.update(running.id, { status: "FAILED", terminationVerified: false, codexPid: null });
+  await assert.rejects(fixture.runService.remove(project.id, running.id), /confirmez l’arrêt/i);
+  assert.equal((await fixture.runService.remove(project.id, running.id, { confirmTermination: true })).status, "FAILED");
+  assert.throws(() => fixture.runRepository.get(project.id, running.id), /not found/i);
+
+  const identified = fixture.runRepository.create(project.id, "identified", "Identified process");
+  fixture.runRepository.update(identified.id, { status: "FAILED", terminationVerified: false, codexPid: process.pid });
+  await assert.rejects(
+    fixture.runService.remove(project.id, identified.id, { confirmTermination: true }),
+    /processus est encore associé/i,
+  );
+
+  const preserved = fixture.runRepository.create(project.id, "preserved", "Preserved work");
+  fixture.runRepository.update(preserved.id, { status: "FAILED" });
+  fixture.runRepository.update(preserved.id, {
+    runBranch: "tasker/preserved",
+    worktreePath: "C:\\preserved-worktree",
+  });
+  await assert.rejects(fixture.runService.remove(project.id, preserved.id), /travail Git préservé/i);
+});
+
 test("completeSuccess honors a late cancellation and rejects cancellation after success", async () => {
   const { ConflictError } = await import("../backend/errors");
   const project = await fixture.project();

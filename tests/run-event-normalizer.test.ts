@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { RunEvent } from "../db/schema";
 import { normalizeRunEvents, parseRunResult } from "../src/components/run-inspector/event-normalizer";
 import { changedFileCount, displayModel, resolvedExecutionConfig } from "../src/components/run-inspector/execution-config";
-import { isRerunnableRun } from "../src/components/task-ui-utils";
+import { isRemovableRun, isRerunnableRun } from "../src/components/task-ui-utils";
 
 function event(id: number, type: string, payload: unknown, timestamp = `2026-09-10T12:00:${String(id).padStart(2, "0")}.000Z`): RunEvent {
   const rawPayload = payload == null ? null : JSON.stringify(payload);
@@ -85,5 +85,18 @@ test("only failed Runs expose the rerun action", () => {
   assert.equal(isRerunnableRun("FAILED"), true);
   for (const status of ["QUEUED", "PREPARING", "RUNNING", "VALIDATING", "SUCCESS", "CANCELLED"]) {
     assert.equal(isRerunnableRun(status), false);
+  }
+});
+
+test("queued and safely confirmable terminal Runs expose removal, including preserved Git work", () => {
+  const run = { status: "QUEUED", terminationVerified: true, codexPid: null, worktreePath: null, runBranch: null };
+  assert.equal(isRemovableRun(run), true);
+  assert.equal(isRemovableRun({ ...run, status: "CANCELLED" }), true);
+  assert.equal(isRemovableRun({ ...run, status: "FAILED", terminationVerified: false }), true);
+  assert.equal(isRemovableRun({ ...run, status: "FAILED", terminationVerified: false, codexPid: 42 }), false);
+  assert.equal(isRemovableRun({ ...run, status: "FAILED", worktreePath: "C:\\preserved" }), true);
+  assert.equal(isRemovableRun({ ...run, status: "SUCCESS", runBranch: "tasker/preserved" }), true);
+  for (const status of ["PREPARING", "RUNNING", "VALIDATING"]) {
+    assert.equal(isRemovableRun({ ...run, status }), false);
   }
 });

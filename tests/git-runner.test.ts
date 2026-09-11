@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { prepareRunWorktree, finalizeRunWorktree, cleanupSuccessfulWorktree,
+import { prepareRunWorktree, finalizeRunWorktree, cleanupSuccessfulWorktree, deleteRunArtifacts,
   type RunWorktree, type PrepareRunWorktreeOptions, type FinalizeRunWorktreeOptions } from "../backend/git/run-git.service";
 
 function git(cwd: string, ...args: string[]) {
@@ -107,5 +107,24 @@ test("isolated Git lifecycle: exact fetch, real changes, preservation, cancellat
   const unsafe = await finish(third);
   assert.equal(unsafe.success, false);
   assert.match(unsafe.error ?? "", /history/);
+  const secondRunId = second.branch.slice("tasker/run-".length, -"-test-task".length);
+  await assert.rejects(deleteRunArtifacts({
+    repoPath: repo,
+    worktreesRoot: runtime,
+    worktreePath: repo,
+    branch: second.branch,
+    runId: secondRunId,
+    taskId: "test-task",
+  }), /boundary/);
+  assert.deepEqual(await deleteRunArtifacts({
+    repoPath: repo,
+    worktreesRoot: runtime,
+    worktreePath: second.worktreePath,
+    branch: second.branch,
+    runId: secondRunId,
+    taskId: "test-task",
+  }), { worktreeRemoved: true, branchRemoved: true });
+  await assert.rejects(fs.stat(second.worktreePath), { code: "ENOENT" });
+  assert.throws(() => git(repo, "rev-parse", "--verify", `refs/heads/${second.branch}`));
   assert.equal(git(repo, "status", "--porcelain"), originalStatus);
 });

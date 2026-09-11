@@ -1,4 +1,5 @@
 import { runService } from "@backend/runs/run.service";
+import { runRepository } from "@backend/runs/run.repository";
 import { errorResponse, assertLocalRequest } from "@backend/http/api";
 
 export const runtime = "nodejs";
@@ -7,6 +8,6 @@ export async function POST(request: Request, {params}: {params: Promise<{id: str
   try {
     assertLocalRequest(request);
     const {id, runId} = await params;
-    return Response.json({run: runService.confirmTermination(id, runId)}, {status: 202});
+    return Response.json({run: runService.confirmTermination(id, runId), queue: runRepository.queueStatus()}, {status: 202});
   } catch (error) { return errorResponse(error); }
 }

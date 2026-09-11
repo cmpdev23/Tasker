@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Project, Run } from "@db/schema";
 import type { TaskDefinition, TaskInput } from "@/types/tasks";
+import type { RunQueueStatus } from "@/types/run-queue";
 import { AlertCircleIcon, HistoryIcon, ListTodoIcon, Loader2Icon, PencilIcon, PlayIcon, PlusIcon, RotateCcwIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
@@ -11,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { TaskEditorDialog } from "@/components/task-editor-dialog";
 import { RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
-import { errorMessage, formatRunDate, isRerunnableRun, SCHEDULE_LABELS, taskRequest, WEEKDAYS } from "@/components/task-ui-utils";
+import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
+import { errorMessage, formatRunDate, isRemovableRun, isRerunnableRun, SCHEDULE_LABELS, taskRequest, WEEKDAYS } from "@/components/task-ui-utils";
 
 function scheduleLabel(task: TaskDefinition) {
   const { type, startsAt, time, timezone, days } = task.schedule;
@@ -37,11 +39,15 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
   const [loading, setLoading] = useState(true);
   const [taskError, setTaskError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [queueStatus, setQueueStatus] = useState<RunQueueStatus | null>(null);
+  const [recoveringPipeline, setRecoveringPipeline] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [editor, setEditor] = useState<TaskDefinition | null | undefined>(undefined);
   const [deleteTask, setDeleteTask] = useState<TaskDefinition | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  const [removingRun, setRemovingRun] = useState<string | null>(null);
   const startingRef = useRef(false);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [historyTask, setHistoryTask] = useState<string | null>(null);
@@ -56,13 +62,17 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
     async function poll() {
       const results = await Promise.allSettled([
         taskRequest<{ tasks: TaskDefinition[] }>(baseUrl + "/tasks", { signal: controller.signal }),
-        taskRequest<{ runs: Run[] }>(baseUrl + "/runs", { signal: controller.signal }),
+        taskRequest<{ runs: Run[]; queue: RunQueueStatus }>(baseUrl + "/runs", { signal: controller.signal }),
       ]);
       if (stopped) return;
       const [taskResult, runResult] = results;
       if (taskResult.status === "fulfilled" && Array.isArray(taskResult.value?.tasks)) { setTasks(taskResult.value.tasks); setTaskError(null); }
       else setTaskError(taskResult.status === "rejected" ? errorMessage(taskResult.reason) : "Réponse de la liste des tâches invalide.");
-      if (runResult.status === "fulfilled" && Array.isArray(runResult.value?.runs)) { setRuns(runResult.value.runs); setRunError(null); }
+      if (runResult.status === "fulfilled" && Array.isArray(runResult.value?.runs)) {
+        setRuns(runResult.value.runs);
+        if (runResult.value.queue) setQueueStatus(runResult.value.queue);
+        setRunError(null);
+      }
       else setRunError(runResult.status === "rejected" ? errorMessage(runResult.reason) : "Réponse de l’historique invalide.");
       setLoading(false);
       timer = setTimeout(poll, 3000);
@@ -87,8 +97,9 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
     setDeleting(true);
     setDeleteError(null);
     try {
-      await taskRequest(baseUrl + `/tasks/${encodeURIComponent(deleteTask.id)}`, { method: "DELETE" });
+      const data = await taskRequest<{ success: boolean; queue: RunQueueStatus }>(baseUrl + `/tasks/${encodeURIComponent(deleteTask.id)}`, { method: "DELETE" });
       setTasks((current) => current.filter((task) => task.id !== deleteTask.id));
+      if (data.queue) setQueueStatus(data.queue);
       setDeleteTask(null);
       setRefresh((value) => value + 1);
       toast.success("Tâche supprimée.");
@@ -107,6 +118,77 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
       setRefresh((value) => value + 1);
     } catch (error) { toast.error(errorMessage(error)); }
     finally { startingRef.current = false; setStarting(null); }
+  }
+
+  async function recoverPipeline() {
+    const blocker = queueStatus?.blocker;
+    if (!blocker || recoveringPipeline || !window.confirm("AgentTasker n’a plus d’identité de processus à vérifier automatiquement. Confirmez que l’ancienne exécution Codex n’est plus en cours, puis reprenez le pipeline.")) return;
+    setRecoveringPipeline(true);
+    setPipelineError(null);
+    try {
+      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(`/api/projects/${encodeURIComponent(blocker.projectId)}/runs/${encodeURIComponent(blocker.id)}/recover`, { method: "POST" });
+      if (data.queue) setQueueStatus(data.queue);
+      setRefresh((value) => value + 1);
+      toast.success("Pipeline débloqué. Les Runs en attente vont reprendre automatiquement.");
+    } catch (error) {
+      setPipelineError(errorMessage(error));
+    } finally {
+      setRecoveringPipeline(false);
+    }
+  }
+
+  async function removeRun(run: Run) {
+    const deleteArtifacts = Boolean(run.worktreePath || run.runBranch);
+    const confirmTermination = !run.terminationVerified;
+    const label = run.status === "QUEUED"
+      ? "Retirer définitivement ce Run de la file ?"
+      : confirmTermination
+        ? "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée."
+      : deleteArtifacts
+        ? "Supprimer définitivement ce Run, son worktree et sa branche ? Tout travail non intégré sera perdu."
+        : "Supprimer définitivement ce Run de l’historique ?";
+    if (removingRun || !window.confirm(label)) return;
+    setRemovingRun(run.id);
+    try {
+      const params = new URLSearchParams();
+      if (deleteArtifacts) params.set("deleteArtifacts", "true");
+      if (confirmTermination) params.set("confirmTermination", "true");
+      const query = params.size ? `?${params.toString()}` : "";
+      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(`${baseUrl}/runs/${encodeURIComponent(run.id)}${query}`, { method: "DELETE" });
+      setRuns((current) => current.filter((item) => item.id !== run.id));
+      setOlderRuns((current) => current.filter((item) => item.id !== run.id));
+      if (data.queue) setQueueStatus(data.queue);
+      if (selectedRun?.id === run.id) setSelectedRun(null);
+      setRefresh((value) => value + 1);
+      toast.success(run.status === "QUEUED" ? "Run retiré de la file." : "Run supprimé de l’historique.");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setRemovingRun(null);
+    }
+  }
+
+  async function removeBlockingRun() {
+    const blocker = queueStatus?.blocker;
+    if (!blocker || !queueStatus.canRecover || removingRun || !window.confirm(
+      "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée.",
+    )) return;
+    setRemovingRun(blocker.id);
+    setPipelineError(null);
+    try {
+      const deleteUrl = `/api/projects/${encodeURIComponent(blocker.projectId)}/runs/${encodeURIComponent(blocker.id)}?deleteArtifacts=true&confirmTermination=true`;
+      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(deleteUrl, { method: "DELETE" });
+      setRuns((current) => current.filter((item) => item.id !== blocker.id));
+      setOlderRuns((current) => current.filter((item) => item.id !== blocker.id));
+      if (data.queue) setQueueStatus(data.queue);
+      if (selectedRun?.id === blocker.id) setSelectedRun(null);
+      setRefresh((value) => value + 1);
+      toast.success("Run bloquant supprimé. Aucune Task n’a été relancée.");
+    } catch (error) {
+      setPipelineError(errorMessage(error));
+    } finally {
+      setRemovingRun(null);
+    }
   }
 
   const mergedRuns = new Map([...olderRuns, ...runs].map((run) => [run.id, run]));
@@ -131,6 +213,16 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+      {queueStatus && ["BLOCKED_RECOVERY", "BLOCKED_PROCESS", "RECOVERY_REQUIRED"].includes(queueStatus.state) && (
+        <QueueStatusPanel
+          queue={queueStatus}
+          recovering={recoveringPipeline}
+          deleting={removingRun === queueStatus.blocker?.id}
+          error={pipelineError}
+          onRecover={queueStatus.blocker ? () => void recoverPipeline() : undefined}
+          onDelete={queueStatus.canRecover && queueStatus.blocker ? () => void removeBlockingRun() : undefined}
+        />
+      )}
       <Frame stacked spacing="sm">
         <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-col gap-1"><FrameTitle>Tasks</FrameTitle><FrameDescription>Planifiez le travail de Codex et suivez chaque exécution.</FrameDescription></div>
@@ -165,6 +257,7 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
                 <span className="min-w-0 flex-1"><span className="block break-words text-sm font-medium">{run.taskName || run.taskId}</span><span className="mt-1 block text-xs text-muted-foreground">{formatRunDate(run.startedAt || run.queuedAt)}</span><span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{run.id}</span></span><RunStatusBadge status={run.status} />
               </button>
               {isRerunnableRun(run.status) && taskExists && <Button type="button" size="sm" variant="outline" disabled={!!starting || !!taskError} onClick={() => void runNow(run.taskId)} title="Créer un nouveau Run avec la configuration actuelle">{starting === run.taskId ? <Loader2Icon className="size-4 animate-spin" /> : <RotateCcwIcon className="size-4" />}Réexécuter</Button>}
+              {isRemovableRun(run) && <Button type="button" size="icon-sm" variant="ghost" disabled={!!removingRun} onClick={() => void removeRun(run)} aria-label={run.status === "QUEUED" ? `Retirer le Run ${run.id} de la file` : `Supprimer le Run ${run.id}`} title={run.status === "QUEUED" ? "Retirer de la file" : run.worktreePath || run.runBranch ? "Supprimer le Run et son travail préservé" : "Supprimer de l’historique"}>{removingRun === run.id ? <Loader2Icon className="size-4 animate-spin" /> : <Trash2Icon className="size-4" />}</Button>}
             </li>;
           })}</ul>}
           {olderError && <p role="alert" className="px-4 py-3 text-sm text-destructive">{olderError}</p>}

@@ -70,11 +70,11 @@ valeurs codées en dur dans le produit.
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
 - SQLite/Drizzle, la gestion des Projects, l'initialisation `.tasker/`, les Instructions, les Settings Git/exécution et la tab Agents sont implémentés.
 - La tab Agents édite `.tasker/agents/main.toml` et les sous-agents TOML, avec découverte locale des modèles via `codex app-server` / `model/list`.
-- La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/hourly/daily/weekly, Run now, la réexécution des Runs échoués, un Sheet live et l’historique. Réexécuter crée un nouveau Run depuis la configuration actuelle sans réutiliser ni supprimer le worktree échoué.
+- La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/hourly/daily/weekly, Run now, la réexécution des Runs échoués, un Sheet live et l’historique. Les Runs en file affichent leur position et les blocages globaux; une terminaison non vérifiée apparaît comme pipeline bloqué lorsqu’un Run attend, ou comme récupération requise lorsqu’il n’y en a aucun. Un Run terminal sans PID connu expose directement deux choix : conserver son travail et débloquer la queue, ou confirmer l’arrêt puis supprimer le Run, son worktree et sa branche en une seule action destructive. Aucune de ces actions ne recrée ni ne relance la Task. Réexécuter reste une action séparée qui crée un nouveau Run depuis la configuration actuelle.
 - Le Sheet live est un Run Inspector : `src/components/run-inspector/` normalise les événements JSONL Codex, regroupe le cycle des items et rend une timeline humaine avec détails techniques secondaires. Le protocole supporté et ses limites sont documentés dans `docs/codex-run-events.md`.
 - Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée. Ils constituent la transposition UI du timer systemd et du runner unique de la référence Linux.
 - Les Settings d’exécution versionnent dans `.tasker/project.toml` le gestionnaire de paquets, l’installation verrouillée optionnelle, les scripts `package.json` de validation et leurs délais. Le worker les exécute hors du sandbox Codex, dans le worktree, avant le commit.
-- Le succès exige une préparation réussie lorsqu’activée, une sortie structurée positive, toutes les validations configurées et les contrôles Git ; le worker commit sans push/merge. Les échecs/annulations préservent le worktree. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
+- Le succès exige une préparation réussie lorsqu’activée, une sortie structurée positive, toutes les validations configurées et les contrôles Git ; le worker commit sans push/merge. Les échecs/annulations préservent le worktree. Au redémarrage, le worker vérifie l’arbre de processus enregistré avant de reprendre la queue ; lorsqu’une ancienne terminaison ne peut plus être vérifiée automatiquement, le Sheet exige une confirmation locale explicite avant la reprise. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
 
 ## Direction d’implémentation
 
@@ -118,7 +118,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 
 1. Valider les chemins POSIX du runner sur macOS/Linux (tests d’intégration actuels sous Windows).
 2. Ajouter, si souhaité, les overrides de validation par Task et le push/PR brouillon contrôlés.
-3. Ajouter une interface de récupération pour les terminaisons non vérifiées, puis la rétention des logs/branches/worktrees.
+3. Ajouter la rétention configurable des logs/branches/worktrees.
 4. Étendre les références et les sous-agents personnalisés sans abstraction multi-provider.
 
 <!-- BEGIN:nextjs-agent-rules -->

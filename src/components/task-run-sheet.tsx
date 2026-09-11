@@ -2,15 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Run, RunEvent } from "@db/schema";
-import { AlertCircleIcon, Loader2Icon } from "lucide-react";
+import type { RunQueueEntry, RunQueueStatus } from "@/types/run-queue";
+import { AlertCircleIcon, Loader2Icon, Trash2Icon } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { errorMessage, isActiveRun, taskRequest } from "@/components/task-ui-utils";
+import { Button } from "@/components/ui/button";
+import { errorMessage, isActiveRun, isRemovableRun, taskRequest } from "@/components/task-ui-utils";
 import { ActivityFeed } from "@/components/run-inspector/activity-feed";
 import { normalizeRunEvents } from "@/components/run-inspector/event-normalizer";
 import { changedFileCount } from "@/components/run-inspector/execution-config";
 import { ExecutionDetails } from "@/components/run-inspector/execution-details";
 import { RawEvents } from "@/components/run-inspector/raw-events";
 import { RunHeader } from "@/components/run-inspector/run-header";
+import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
 import { RunSummary } from "@/components/run-inspector/run-summary";
 
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
@@ -27,9 +30,12 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
   const [error, setError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<RunQueueStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(initialRun.cancelRequested);
   const [follow, setFollow] = useState(() => isActiveRun(initialRun.status));
   // The Sheet is mounted only after a client-side selection, so this does not
@@ -57,10 +63,11 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
     const controller = new AbortController();
     async function poll() {
       try {
-        const data = await taskRequest<{ run: Run; events: RunEvent[] }>(`${runUrl}?after=${cursor}`, { signal: controller.signal });
+        const data = await taskRequest<{ run: Run; events: RunEvent[]; queue: RunQueueStatus }>(`${runUrl}?after=${cursor}`, { signal: controller.signal });
         if (stopped) return;
         if (!data?.run || !Array.isArray(data.events)) throw new Error("Réponse du suivi d’exécution invalide.");
         setRun(data.run);
+        if (data.queue) setQueue(data.queue);
         if (data.run.cancelRequested) setCancelRequested(true);
         setEvents((current) => {
           const merged = new Map(current.map((event) => [event.id, event]));
@@ -107,18 +114,64 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
     }
   }
 
-  async function recoverQueue() {
-    if (recovering || !window.confirm("Confirmez seulement après avoir vérifié localement qu’aucun processus de ce Run n’utilise encore son worktree. Reprendre la file ?")) return;
+  async function recoverQueue(target?: Pick<RunQueueEntry, "id" | "projectId">) {
+    const recoveryTarget = target ?? { id: run.id, projectId };
+    if (recovering || !window.confirm("AgentTasker n’a plus d’identité de processus à vérifier automatiquement. Confirmez que l’ancienne exécution Codex n’est plus en cours, puis reprenez le pipeline.")) return;
     setRecovering(true);
     setRecoveryError(null);
     try {
-      const data = await taskRequest<{ run: Run }>(runUrl + "/recover", { method: "POST" });
+      const recoveryUrl = `/api/projects/${encodeURIComponent(recoveryTarget.projectId)}/runs/${encodeURIComponent(recoveryTarget.id)}/recover`;
+      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(recoveryUrl, { method: "POST" });
       if (!data?.run) throw new Error("Réponse de récupération invalide.");
-      setRun(data.run);
+      if (data.run.id === run.id) setRun(data.run);
+      if (data.queue) setQueue(data.queue);
     } catch (caught) {
       setRecoveryError(errorMessage(caught));
     } finally {
       setRecovering(false);
+    }
+  }
+
+  async function removeRun() {
+    const deleteArtifacts = Boolean(run.worktreePath || run.runBranch);
+    const confirmTermination = !run.terminationVerified;
+    const label = run.status === "QUEUED"
+      ? "Retirer définitivement ce Run de la file ?"
+      : confirmTermination
+        ? "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée."
+      : deleteArtifacts
+        ? "Supprimer définitivement ce Run, son worktree et sa branche ? Tout travail non intégré sera perdu."
+        : "Supprimer définitivement ce Run de l’historique ?";
+    if (deleting || !window.confirm(label)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const params = new URLSearchParams();
+      if (deleteArtifacts) params.set("deleteArtifacts", "true");
+      if (confirmTermination) params.set("confirmTermination", "true");
+      await taskRequest(runUrl + (params.size ? `?${params.toString()}` : ""), { method: "DELETE" });
+      onClose();
+    } catch (caught) {
+      setDeleteError(errorMessage(caught));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function removeQueueBlocker(target: RunQueueEntry) {
+    if (deleting || !window.confirm(
+      "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée.",
+    )) return;
+    setDeleting(true);
+    setRecoveryError(null);
+    try {
+      const deleteUrl = `/api/projects/${encodeURIComponent(target.projectId)}/runs/${encodeURIComponent(target.id)}?deleteArtifacts=true&confirmTermination=true`;
+      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(deleteUrl, { method: "DELETE" });
+      if (data.queue) setQueue(data.queue);
+    } catch (caught) {
+      setRecoveryError(errorMessage(caught));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -131,17 +184,36 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
           changedFiles={changedFiles}
           cancelling={cancelling}
           cancelRequested={cancelRequested}
+          deleting={deleting}
           rerunning={rerunning}
           onCancel={cancel}
+          onDelete={isRemovableRun(run) ? () => void removeRun() : undefined}
           onRerun={onRerun}
         />
+        {run.status === "QUEUED" && queue && (
+          <div className="shrink-0 border-b px-5 py-3 sm:px-7">
+            <QueueStatusPanel
+              queue={queue}
+              recovering={recovering}
+              deleting={deleting}
+              error={recoveryError}
+              onRecover={queue.blocker ? () => void recoverQueue(queue.blocker!) : undefined}
+              onDelete={queue.canRecover && queue.blocker ? () => void removeQueueBlocker(queue.blocker!) : undefined}
+            />
+          </div>
+        )}
         {run.terminationVerified === false && (!isActiveRun(run.status) || run.error) && (
           <div role="alert" className="flex shrink-0 gap-3 border-b border-destructive/30 bg-destructive/10 px-5 py-3 sm:px-7">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
             <div className="space-y-1">
               <h2 className="text-sm font-medium text-destructive">File bloquée — arrêt non confirmé</h2>
               <p className="text-xs leading-relaxed">AgentTasker n’a pas pu vérifier l’arrêt de tous les processus. Le worktree est préservé. Vérifiez localement qu’aucun processus de ce Run ne l’utilise encore, puis confirmez la reprise.</p>
-              {!isActiveRun(run.status) && <button type="button" className="mt-2 text-xs font-medium underline underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60" disabled={recovering || run.codexPid !== null} onClick={() => void recoverQueue()}>{recovering ? "Reprise de la file…" : "Confirmer l’arrêt et reprendre la file"}</button>}
+              {!isActiveRun(run.status) && run.codexPid === null && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" disabled={recovering || deleting} onClick={() => void recoverQueue()}>{recovering ? <Loader2Icon className="animate-spin" /> : null}{recovering ? "Déblocage…" : "Conserver et débloquer"}</Button>
+                  <Button type="button" size="sm" variant="destructive" disabled={recovering || deleting} onClick={() => void removeRun()}>{deleting ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}{deleting ? "Suppression…" : "Supprimer ce Run"}</Button>
+                </div>
+              )}
               {recoveryError && <p className="text-xs text-destructive">{recoveryError}</p>}
             </div>
           </div>
@@ -164,6 +236,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
               </p>
             )}
             {cancelError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{cancelError}</p>}
+            {deleteError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{deleteError}</p>}
             <RunSummary run={run} />
             <ExecutionDetails run={run} />
             <ActivityFeed activities={activities} loading={loading} active={isActiveRun(run.status)} follow={follow} onFollowChange={setFollow} />

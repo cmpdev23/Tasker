@@ -163,6 +163,30 @@ test("unverified termination blocks queued work even when the old run has a term
   } finally { await runner.stop(); await eventually(() => !lock()); }
 });
 
+test("runtime logs the exact unverified termination blocker without repeating every tick", async () => {
+  const project = await fixture.project();
+  const old = fixture.runRepository.create(project.id, "old", "Old run");
+  fixture.runRepository.update(old.id, { status: "FAILED", terminationVerified: false, codexPid: null });
+  const queued = fixture.runRepository.create(project.id, "queued", "Queued");
+  const entries: Array<{ event: string; details: Record<string, unknown> }> = [];
+  const runner = createRunner({ debug: (event, details) => entries.push({ event, details }) });
+  try {
+    await eventually(() => entries.some(entry => entry.event === "queue-blocked-unverified-termination"));
+    await runner.tick();
+    await runner.tick();
+    const blockers = entries.filter(entry => entry.event === "queue-blocked-unverified-termination");
+    assert.equal(blockers.length, 1);
+    assert.equal(blockers[0].details.runId, old.id);
+    assert.equal(blockers[0].details.projectId, project.id);
+    assert.equal(blockers[0].details.taskId, old.taskId);
+    assert.equal(blockers[0].details.status, "FAILED");
+    assert.equal(fixture.runRepository.get(project.id, queued.id).status, "QUEUED");
+    fixture.runService.cancel(project.id, queued.id);
+    fixture.runRepository.update(old.id, { terminationVerified: true });
+    await runner.tick();
+  } finally { await runner.stop(); await eventually(() => !lock()); }
+});
+
 test("restart fails an unverified active run without a PID and preserves the queue block across another restart", async () => {
   const project = await fixture.project();
   const worktree = path.join(fixture.root, "unverified-worktree");

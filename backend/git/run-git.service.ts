@@ -48,6 +48,16 @@ export interface RunGitResult {
   error: string | null;
 }
 
+export interface DeleteRunArtifactsOptions {
+  repoPath: string;
+  worktreesRoot: string;
+  worktreePath: string;
+  branch: string;
+  runId: string;
+  taskId: string;
+  signal?: AbortSignal;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TASK_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/;
 
@@ -221,4 +231,66 @@ export async function cleanupSuccessfulWorktree(worktree: RunWorktree, result: R
   }
 }
 
-export const runGitService = { prepareRunWorktree, verifyRunWorktree, inspectRunChanges, finalizeRunWorktree, cleanupSuccessfulWorktree };
+/** Explicit destructive cleanup requested by the user for a terminal Run. */
+export async function deleteRunArtifacts(options: DeleteRunArtifactsOptions): Promise<{ worktreeRemoved: boolean; branchRemoved: boolean }> {
+  const { runId, taskId, signal } = options;
+  signal?.throwIfAborted();
+  if (!UUID.test(runId) || !TASK_ID.test(taskId)) throw new Error("Invalid run UUID or task identifier.");
+  const expectedBranch = `tasker/run-${runId}-${taskId}`;
+  if (options.branch !== expectedBranch) throw new Error("Run branch does not match the Run identity.");
+  if (!path.isAbsolute(options.worktreesRoot) || !path.isAbsolute(options.worktreePath)) {
+    throw new Error("Run cleanup paths must be absolute.");
+  }
+  const repoPath = await fs.realpath((await git(options.repoPath, ["rev-parse", "--show-toplevel"], signal)).trim());
+  const worktreesRoot = await canonicalProspectivePath(path.resolve(options.worktreesRoot));
+  const worktreePath = await canonicalProspectivePath(path.resolve(options.worktreePath));
+  const expectedPath = path.join(worktreesRoot, expectedBranch.slice("tasker/".length));
+  if (worktreePath !== expectedPath || path.dirname(worktreePath) !== worktreesRoot || contains(repoPath, worktreePath) || contains(worktreePath, repoPath)) {
+    throw new Error("Run cleanup path failed the runtime boundary check.");
+  }
+  await ensureExternalRoot(repoPath, worktreesRoot, signal);
+
+  let worktreeExists = true;
+  try { await fs.lstat(worktreePath); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    worktreeExists = false;
+  }
+  if (worktreeExists) {
+    await verifyRunWorktree({
+      repoPath,
+      worktreesRoot,
+      worktreePath,
+      branch: expectedBranch,
+      remote: "",
+      baseBranch: "",
+      trackingRef: "",
+      baseCommit: "",
+    }, signal);
+    await git(repoPath, ["worktree", "remove", "--force", "--", worktreePath], signal);
+  }
+
+  try {
+    await fs.lstat(worktreePath);
+    throw new Error("Run worktree still exists after cleanup.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  let branchRemoved = false;
+  try {
+    await git(repoPath, ["rev-parse", "--verify", `refs/heads/${expectedBranch}^{commit}`], signal);
+    await git(repoPath, ["branch", "-D", "--", expectedBranch], signal);
+    branchRemoved = true;
+  } catch (error) {
+    try {
+      await git(repoPath, ["rev-parse", "--verify", `refs/heads/${expectedBranch}^{commit}`], signal);
+    } catch {
+      return { worktreeRemoved: worktreeExists, branchRemoved };
+    }
+    throw error;
+  }
+  return { worktreeRemoved: worktreeExists, branchRemoved };
+}
+
+export const runGitService = { prepareRunWorktree, verifyRunWorktree, inspectRunChanges, finalizeRunWorktree, cleanupSuccessfulWorktree, deleteRunArtifacts };

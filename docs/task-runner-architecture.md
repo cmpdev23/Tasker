@@ -134,12 +134,31 @@ les trois secondes. Ce polling reprend simplement après déconnexion sans maint
 de flux HTTP ; les logs demeurent consultables après fermeture du navigateur.
 L’historique est paginé par 200 Runs avec un curseur `before`.
 
+Le serveur émet aussi des diagnostics structurés préfixés
+`[AgentTasker][runner:debug]`. Ils couvrent l’initialisation du runner, la mise en
+file, le verrou interprocessus, la réclamation, la fin d’exécution et les barrières
+de récupération. Les états répétitifs sont dédupliqués afin qu’une file bloquée
+nomme le Run responsable sans écrire une nouvelle ligne à chaque tick.
+
 Le Sheet agit comme un Run Inspector. Il normalise les événements JSONL en une
 timeline humaine, regroupe les cycles `item.started`/`updated`/`completed`, puis
 utilise un renderer spécialisé pour les messages, reasoning, commandes, fichiers,
 outils, recherches, plans, sous-agents et erreurs. Les événements bruts restent
 disponibles dans une section technique chargée à la demande. Voir
 [le contrat des événements Codex](codex-run-events.md).
+
+Un Run `QUEUED` affiche sa position dans la file et l’état global du worker. Si une
+ancienne terminaison non vérifiée bloque le pipeline, la vue Tasks et le Run en
+attente identifient le Run responsable et proposent la confirmation locale qui
+relance la file, même lorsque le bloqueur appartient à un autre Project. Sans Run
+en attente, le même état est présenté comme **récupération requise avant le prochain
+Run**, et non comme un pipeline actuellement bloqué. Un Run en file peut être retiré
+directement. Un Run terminal sans PID connu expose directement deux choix :
+**Conserver et débloquer**, qui certifie seulement la terminaison, ou **Supprimer le
+Run bloquant**, qui combine cette certification et la suppression. Le second choix
+avertit que le travail non intégré sera perdu; le backend supprime explicitement le
+worktree et la branche avant d’effacer l’historique. Une erreur de nettoyage conserve
+le Run visible et récupérable. Aucun de ces choix ne crée ou ne relance une Task.
 
 Un Run `FAILED` expose l’action **Réexécuter** dans la ligne de Task, son entrée
 d’historique et le Run Inspector. Cette action crée un nouveau Run manuel dans la
@@ -161,7 +180,10 @@ d’exécution. Les requêtes de mutation Tasks/Runs sont limitées aux origines
 Le CRUD refuse traversées de chemins, symlinks et fichiers inattendus lors d’une
 suppression. La suppression d’une tâche avec Runs actifs est refusée. Supprimer
 une tâche terminée conserve ses Runs ; supprimer un Project sans Runs actifs
-supprime aussi son historique via les relations SQLite en cascade.
+supprime aussi son historique via les relations SQLite en cascade. Les mutations
+de Task, de Run et de récupération retournent le nouvel état global de la queue :
+l’interface le réconcilie immédiatement, tandis que le polling toutes les trois
+secondes reste un filet de sécurité pour les changements produits par le worker.
 
 ## Validation et finalisation
 
@@ -221,19 +243,36 @@ du serveur attend le tick actif et la terminaison de son worker avant de libére
 son verrou. Après une mort brutale, les anciens Runs actifs sans processus vivant
 sont marqués échoués, en préservant branche, fichiers et événements.
 
-Si l’ancien PID du sous-processus actif est encore vivant, la queue reste suspendue jusqu’à sa
-disparition : aucun PID hérité n’est tué aveuglément. Si la terminaison des
-descendants n’a pas pu être vérifiée, `termination_verified = 0` bloque durablement
-la queue, y compris après redémarrage. Une intervention locale doit vérifier et
-terminer les processus restants avant de rétablir ce champ pour le Run concerné.
-Cette récupération exceptionnelle n’a pas encore d’interface dédiée.
+Au redémarrage, lorsqu’un PID du sous-processus interrompu est conservé, le runner
+vérifie d’abord que son arbre de processus (Windows) ou son groupe (POSIX) est bien
+terminé. Il peut alors certifier la terminaison, marquer le Run interrompu en échec
+ou annulé, préserver son worktree et reprendre la queue. Si le processus ou un
+descendant est encore présent, la queue reste suspendue : aucun PID hérité n’est tué
+aveuglément.
+
+Si la terminaison ne peut pas être vérifiée (`termination_verified = 0`) et qu’un
+ancien Run terminal n’a plus d’identité de processus exploitable, le Sheet affiche
+une récupération locale explicite. Après avoir vérifié et arrêté les processus
+restants, l’utilisateur confirme la reprise ; le backend n’accepte cette action que
+pour un Run terminal sans PID enregistré et persiste un événement de récupération.
+Le worktree est toujours préservé. Sans cette confirmation, la queue demeure bloquée,
+y compris après redémarrage.
 
 Le champ est mis à zéro **avant** le lancement de Codex, puis rétabli uniquement
 après vérification de fin, y compris pour une sortie normale. Un crash au milieu
-d’une exécution demande donc cette vérification locale avant reprise. Supprimer
-le projet ne permet pas de contourner ce blocage : la suppression est refusée tant
-qu’une terminaison reste non vérifiée. Une annulation reçue pendant le nettoyage
-est arbitrée transactionnellement avant le statut final.
+d’une exécution déclenche donc la vérification automatique ci-dessus lorsque le PID
+est disponible, ou la confirmation locale lorsque son identité a déjà été perdue.
+Supprimer le projet ne permet pas de contourner ce blocage : la suppression est
+refusée tant qu’une terminaison reste non vérifiée. Une annulation reçue pendant le
+nettoyage est arbitrée transactionnellement avant le statut final.
+
+La suppression explicite d’un Run préservé obéit à la même garde. Elle peut inclure
+la confirmation manuelle de terminaison lorsque le Run est terminal et qu’aucun PID
+n’est encore enregistré. Elle valide ensuite que le worktree appartient au dépôt,
+au répertoire runtime et à la branche exacte dérivée du Run, puis retire le worktree
+et la branche avant la ligne SQLite. Elle est volontairement destructive et demande
+une confirmation claire dans l’interface. Un PID encore présent interdit cette voie
+rapide : la vérification automatique doit d’abord constater l’arrêt réel.
 
 Tout échec ou annulation conserve le worktree. Un succès ne retire le worktree
 que si son commit est retenu par la branche, son HEAD est conforme et son contenu
@@ -262,8 +301,8 @@ fichier de test, SUCCESS et commit automatique, sans modifier le checkout princi
 `real-run-cancel-smoke.mjs` a ensuite confirmé l’annulation d’un véritable processus
 Codex depuis le Sheet, avec terminaison vérifiée et worktree conservé.
 Le redémarrage en production a conservé la Task et les 61 événements du Run réussi.
-La validation finale comprend 67 tests réussis, un test de symlink ignoré faute de
-privilèges Windows, TypeScript, ESLint et le build de production Turbopack réussi.
+La validation locale actuelle comprend 74 tests réussis, un test de symlink ignoré
+faute de privilèges Windows, ainsi que les contrôles TypeScript et ESLint.
 Une seconde exécution réelle réussie a vérifié le contrôle renforcé des descendants
 après sortie normale de Codex, avec terminaison vérifiée et nettoyage du worktree.
 

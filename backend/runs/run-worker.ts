@@ -15,6 +15,7 @@ import { prepareRunWorktree, finalizeRunWorktree, inspectRunChanges, cleanupSucc
 import { evaluateSchedules } from "../scheduler/scheduler.service";
 import { RUNNER_CONFIG } from "./runner-config";
 import { runRepository } from "./run.repository";
+import { logRunDebug, type RunDebugDetails, type RunDebugLogger } from "./run-logger";
 import {
   assertProjectExecutionRuntime,
   projectPreparationCommands,
@@ -171,30 +172,48 @@ export async function executeRun(run: Run, controller = new AbortController()) {
   } finally { clearInterval(cancellation); }
 }
 
-export function createRunner() {
+export function createRunner(options: { debug?: RunDebugLogger } = {}) {
   const token = randomUUID();
+  const debug = options.debug ?? logRunDebug;
   let busy = false;
   let stopping = false;
   let owned = false;
   let current: AbortController | undefined;
   let execution: Promise<void> | undefined;
+  let currentRun: Pick<Run, "id" | "projectId" | "taskId"> | undefined;
   let lastErrors = "";
+  let lastState = "";
   const tickWaiters: Array<() => void> = [];
+  const state = (event: string, details: RunDebugDetails) => {
+    const nextState = JSON.stringify({ event, ...details });
+    if (nextState === lastState) return;
+    lastState = nextState;
+    debug(event, details);
+  };
   const acquire = () => sqlite.transaction(() => {
     const lock = db.select().from(runnerLock).where(eq(runnerLock.id, 1)).get();
-    if (lock?.token === token) return true;
-    if (lock && alive(lock.ownerPid)) return false;
+    if (lock?.token === token) return { acquired: true, reclaimedOwnerPid: null };
+    if (lock && alive(lock.ownerPid)) {
+      return { acquired: false, ownerPid: lock.ownerPid, reclaimedOwnerPid: null };
+    }
     db.insert(runnerLock).values({ id: 1, ownerPid: process.pid, token }).onConflictDoUpdate({
       target: runnerLock.id, set: { ownerPid: process.pid, token } }).run();
-    return true;
+    return { acquired: true, reclaimedOwnerPid: lock?.ownerPid ?? null };
   }).immediate();
   const release = () => db.delete(runnerLock).where(and(eq(runnerLock.id, 1), eq(runnerLock.token, token))).run();
   const tick = async () => {
     if (busy || stopping) return;
     busy = true;
     try {
-      if (!acquire()) return;
-      if (!owned) { owned = true; console.info("[AgentTasker] Scheduler and single worker started."); }
+      const lock = acquire();
+      if (!lock.acquired) {
+        state("queue-blocked-runner-lock", { ownerPid: lock.ownerPid, contenderPid: process.pid });
+        return;
+      }
+      if (!owned) {
+        owned = true;
+        debug("runner-started", { ownerPid: process.pid, reclaimedOwnerPid: lock.reclaimedOwnerPid });
+      }
       // A killed server may leave its active subprocess alive. Never start another Run or blindly kill a reused PID.
       for (const interrupted of execution ? [] : runRepository.active()) {
         if (interrupted.codexPid) {
@@ -208,6 +227,13 @@ export function createRunner() {
               runRepository.update(interrupted.id, { error: message });
               runRepository.event(interrupted.id, "recovery", message);
             }
+            state("queue-blocked-active-process", {
+              runId: interrupted.id,
+              projectId: interrupted.projectId,
+              taskId: interrupted.taskId,
+              status: interrupted.status,
+              processPid: interrupted.codexPid,
+            });
             return;
           }
         }
@@ -220,16 +246,72 @@ export function createRunner() {
         runRepository.event(interrupted.id, "recovery", terminationVerified
           ? "Interrupted run process tree verified stopped; queue resumed. Worktree preserved for inspection."
           : "Interrupted run recovered; preserved worktree for inspection.");
+        debug("interrupted-run-recovered", {
+          runId: interrupted.id,
+          projectId: interrupted.projectId,
+          taskId: interrupted.taskId,
+          status: interrupted.cancelRequested ? "CANCELLED" : "FAILED",
+          terminationVerified,
+        });
       }
-      if (!execution && runRepository.hasUnverifiedTermination()) return;
+      if (!execution) {
+        const blocker = runRepository.unverifiedTermination();
+        if (blocker) {
+          state("queue-blocked-unverified-termination", {
+            runId: blocker.id,
+            projectId: blocker.projectId,
+            taskId: blocker.taskId,
+            status: blocker.status,
+            processPid: blocker.codexPid,
+            terminationVerified: blocker.terminationVerified,
+          });
+          return;
+        }
+      }
       const errors = (await evaluateSchedules()).join("\n");
       if (errors !== lastErrors) { lastErrors = errors; if (errors) console.warn("[AgentTasker] Schedule errors:\n" + errors); }
       if (stopping) return;
-      const run = execution ? undefined : runRepository.claim();
+      if (execution) {
+        state("run-executing", {
+          runId: currentRun?.id,
+          projectId: currentRun?.projectId,
+          taskId: currentRun?.taskId,
+        });
+        return;
+      }
+      const run = runRepository.claim();
       if (run) {
+        currentRun = { id: run.id, projectId: run.projectId, taskId: run.taskId };
+        state("run-claimed", {
+          runId: run.id,
+          projectId: run.projectId,
+          taskId: run.taskId,
+          queuedAt: run.queuedAt,
+          startedAt: run.startedAt,
+        });
         current = new AbortController();
         execution = executeRun(run, current).catch(error => console.error("[AgentTasker] Worker error:", error))
-          .finally(() => { current = undefined; execution = undefined; if (stopping) release(); });
+          .finally(() => {
+            try {
+              const completed = runRepository.get(run.projectId, run.id);
+              debug("run-finished", {
+                runId: completed.id,
+                projectId: completed.projectId,
+                taskId: completed.taskId,
+                status: completed.status,
+                terminationVerified: completed.terminationVerified,
+              });
+            } catch (error) {
+              console.error("[AgentTasker] Failed to read completed Run for diagnostics:", error);
+            } finally {
+              current = undefined;
+              currentRun = undefined;
+              execution = undefined;
+              if (stopping) release();
+            }
+          });
+      } else {
+        state("queue-idle", { ownerPid: process.pid });
       }
     } catch (error) { console.error("[AgentTasker] Runner error:", error); }
     finally {
@@ -240,11 +322,14 @@ export function createRunner() {
   };
   const timer = setInterval(() => void tick(), RUNNER_CONFIG.tickMs);
   timer.unref();
+  debug("runner-created", { ownerPid: process.pid, tickMs: RUNNER_CONFIG.tickMs });
   void tick();
   return { tick, async stop() {
+    debug("runner-stopping", { ownerPid: process.pid, activeRunId: currentRun?.id });
     stopping = true; clearInterval(timer); current?.abort();
     if (busy) await new Promise<void>(resolve => tickWaiters.push(resolve));
     await execution; release();
+    debug("runner-stopped", { ownerPid: process.pid });
   } };
 }
 
@@ -254,6 +339,8 @@ export function startRunner() {
     globalRunner.agentTaskerRunner = createRunner();
     process.once("SIGTERM", () => globalRunner.agentTaskerRunner?.stop());
     process.once("SIGINT", () => globalRunner.agentTaskerRunner?.stop());
+  } else {
+    logRunDebug("runner-reused", { ownerPid: process.pid });
   }
   return globalRunner.agentTaskerRunner;
 }

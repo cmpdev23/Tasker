@@ -60,3 +60,14 @@ export function isActiveRun(status: string) {
 export function isRerunnableRun(status: string) {
   return status === "FAILED";
 }
+
+export function isRemovableRun(run: {
+  status: string;
+  terminationVerified: boolean;
+  codexPid: number | null;
+  worktreePath: string | null;
+  runBranch: string | null;
+}) {
+  if (isActiveRun(run.status)) return run.status === "QUEUED" && run.terminationVerified;
+  return run.terminationVerified || run.codexPid === null;
+}

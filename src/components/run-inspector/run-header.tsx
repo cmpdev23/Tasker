@@ -1,5 +1,5 @@
 import type { Run } from "@db/schema";
-import { Loader2Icon, RotateCcwIcon, SquareIcon } from "lucide-react";
+import { Loader2Icon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
@@ -7,14 +7,16 @@ import { displayModel, resolvedExecutionConfig } from "./execution-config";
 import { formatRunElapsed, shortId } from "./format";
 import { RunStatusBadge } from "./run-status-badge";
 
-export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, rerunning, onCancel, onRerun }: {
+export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, onCancel, onDelete, onRerun }: {
   run: Run;
   now: number | null;
   changedFiles: number;
   cancelling: boolean;
   cancelRequested: boolean;
+  deleting: boolean;
   rerunning: boolean;
   onCancel: () => void;
+  onDelete?: () => void;
   onRerun?: () => void;
 }) {
   const config = resolvedExecutionConfig(run.resolvedConfig);
@@ -62,7 +64,13 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
               Réexécuter
             </Button>
           )}
-          {isActiveRun(run.status) && (
+          {onDelete && (
+            <Button variant={run.status === "QUEUED" ? "destructive" : "outline"} size="sm" disabled={deleting} onClick={onDelete}>
+              {deleting ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <Trash2Icon data-icon="inline-start" />}
+              {run.status === "QUEUED" ? "Retirer de la file" : "Supprimer"}
+            </Button>
+          )}
+          {isActiveRun(run.status) && run.status !== "QUEUED" && (
             <Button variant="destructive" size="sm" disabled={cancelling || cancelRequested} onClick={onCancel}>
               {cancelling || cancelRequested ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <SquareIcon data-icon="inline-start" />}
               {cancelRequested ? "Annulation demandée…" : "Annuler"}

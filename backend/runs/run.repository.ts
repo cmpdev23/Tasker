@@ -3,9 +3,23 @@ import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { db, sqlite } from "../../db/client";
 import { runs, runEvents, type Run } from "../../db/schema";
 import { NotFoundError } from "../errors";
+import type { RunQueueEntry, RunQueueStatus } from "../../src/types/run-queue";
 
 export const ACTIVE_STATUSES = ["QUEUED", "PREPARING", "RUNNING", "VALIDATING"];
 export const EXECUTING_STATUSES = ACTIVE_STATUSES.slice(1);
+
+function queueEntry(run: Run): RunQueueEntry {
+  return {
+    id: run.id,
+    projectId: run.projectId,
+    taskId: run.taskId,
+    taskName: run.taskName,
+    status: run.status,
+    queuedAt: run.queuedAt,
+    startedAt: run.startedAt,
+    codexPid: run.codexPid,
+  };
+}
 
 export const runRepository = {
   create(projectId: string, taskId: string, taskName: string, scheduledAt: string | null = null): Run {
@@ -47,12 +61,46 @@ export const runRepository = {
       .orderBy(asc(runEvents.id)).limit(500).all();
   },
   active() { return db.select().from(runs).where(inArray(runs.status, EXECUTING_STATUSES)).all(); },
+  unverifiedTermination() {
+    return db.select().from(runs).where(eq(runs.terminationVerified, false))
+      .orderBy(asc(runs.createdAt)).get();
+  },
   hasUnverifiedTermination() {
-    return Boolean(db.select({ id: runs.id }).from(runs).where(eq(runs.terminationVerified, false)).get());
+    return Boolean(this.unverifiedTermination());
   },
   hasActive(projectId: string, taskId: string) {
     return Boolean(db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, projectId),
       eq(runs.taskId, taskId), inArray(runs.status, ACTIVE_STATUSES))).get());
+  },
+  queueStatus(runId?: string): RunQueueStatus {
+    const queued = db.select().from(runs).where(eq(runs.status, "QUEUED"))
+      .orderBy(asc(runs.queuedAt), asc(runs.createdAt)).all();
+    const unverified = db.select().from(runs).where(eq(runs.terminationVerified, false))
+      .orderBy(asc(runs.createdAt)).all();
+    const recoveryBlocker = unverified.find((run) => !EXECUTING_STATUSES.includes(run.status));
+    const active = this.active()[0];
+    const processBlocker = active?.terminationVerified === false && Boolean(active.error) ? active : undefined;
+    const blocker = recoveryBlocker ?? processBlocker ?? active;
+    const state = recoveryBlocker
+      ? queued.length ? "BLOCKED_RECOVERY" : "RECOVERY_REQUIRED"
+      : processBlocker
+        ? "BLOCKED_PROCESS"
+        : active
+          ? "RUNNING"
+          : queued.length
+            ? "READY"
+            : "IDLE";
+    const position = runId ? queued.findIndex((run) => run.id === runId) : -1;
+    return {
+      state,
+      queuedCount: queued.length,
+      position: position < 0 ? null : position + 1,
+      blocker: blocker ? queueEntry(blocker) : null,
+      canRecover: (state === "BLOCKED_RECOVERY" || state === "RECOVERY_REQUIRED") && blocker?.codexPid === null,
+    };
+  },
+  remove(runId: string) {
+    db.delete(runs).where(eq(runs.id, runId)).run();
   },
   claim(): Run | undefined {
     return sqlite.transaction(() => {

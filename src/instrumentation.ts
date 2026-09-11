@@ -1,6 +1,7 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs" && process.env.NEXT_PHASE !== "phase-production-build") {
     const { startRunner } = await import("@backend/runs/run-worker");
+    console.info(`[AgentTasker][runner:debug] instrumentation-register ${JSON.stringify({ pid: process.pid })}`);
     startRunner();
   }
 }

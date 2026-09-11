@@ -200,3 +200,13 @@ base_branch = "main"
 ```
 
 When a new developer clones the repository, AgentTasker detects `.tasker/project.toml` and automatically knows to use `main` as the Base branch for new task worktrees.
+
+---
+
+## 8. Preserved Work and Explicit Deletion
+
+Failed and cancelled Runs preserve their worktree and Run branch by default so that partial work remains inspectable and recoverable. This automatic preservation policy does not make those artifacts permanent.
+
+The user can explicitly delete a terminal Run from the interface. When no process identity remains, the destructive confirmation can also serve as the required manual termination confirmation, so deletion is available directly from the recovery banner and Run history instead of being hidden behind a separate recovery step. A recorded PID still prevents deletion until automatic verification observes its termination.
+
+When the Run owns preserved Git artifacts, AgentTasker validates the exact Run-derived branch, confirms that the worktree belongs to the repository and configured runtime root, then removes the worktree and branch before deleting the SQLite record. If any Git cleanup step fails, the Run record remains visible so that work is not silently orphaned. Deleting or recovering a Run never creates or restarts a Task.
