@@ -17,3 +17,7 @@
   blocage est expliqué. Ne pas cacher « Supprimer » derrière une confirmation
   préalable qui fait disparaître la garde UI; offrir le parcours combiné lorsque
   les mêmes conditions de sécurité peuvent être confirmées en une seule action.
+- Avant de lancer les tests SQLite, utiliser le runtime Node correspondant au module
+  natif `better-sqlite3` installé, idéalement celui du serveur de développement déjà
+  actif. Une série d’erreurs `NODE_MODULE_VERSION` indique un mauvais runtime de
+  test, pas des régressions applicatives.
