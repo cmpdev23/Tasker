@@ -4,14 +4,14 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarTrigger,
-} from "@/components/ui/sidebar"
-import Link from "next/link"
+} from "@/components/ui/sidebar";
+import Link from "next/link";
 
-import { Logo } from "./logo"
-import { NavMain } from "./nav-main"
-import { NavProjects } from "./nav-projects"
-import { NavWorkspace } from "./nav-workspace"
-import { NotificationsPopover } from "./notifications-popover"
+import { Logo } from "./logo";
+import { NavMain } from "./nav-main";
+import { NavProjects } from "./nav-projects";
+import { NavWorkspace } from "./nav-workspace";
+import { NotificationsPopover } from "./notifications-popover";
 
 export function AppSidebar() {
   return (
@@ -24,7 +24,7 @@ export function AppSidebar() {
         >
           <Logo />
           <span className="text-sm font-medium in-data-[state=collapsed]:hidden">
-            CodexTasker
+            Tasker
           </span>
         </Link>
 
@@ -45,5 +45,5 @@ export function AppSidebar() {
         <NavWorkspace />
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }

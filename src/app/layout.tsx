@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CodexTasker",
+  title: "Tasker",
   description: "Un espace de travail pour vos tâches Codex.",
 };
 
