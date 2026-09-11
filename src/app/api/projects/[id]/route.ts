@@ -38,6 +38,7 @@ export async function PATCH(
       slug: body.slug,
       repositoryPath: body.repositoryPath,
       defaultBranch: body.defaultBranch,
+      archived: body.archived,
     });
     if (body.defaultBranch && updated.repositoryPath) {
       taskerService.updateProjectTomlBaseBranch(updated.repositoryPath, body.defaultBranch);

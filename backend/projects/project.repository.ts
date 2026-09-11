@@ -1,6 +1,6 @@
 import { db, sqlite } from "@db/client";
 import { projects, runs, type Project } from "@db/schema";
-import { eq, desc, and, or, inArray } from "drizzle-orm";
+import { eq, desc, and, or, inArray, isNull } from "drizzle-orm";
 import { ConflictError } from "../errors";
 
 export interface CreateProjectRepoInput {
@@ -15,11 +15,15 @@ export interface UpdateProjectRepoInput {
   slug?: string;
   repositoryPath?: string | null;
   defaultBranch?: string | null;
+  archivedAt?: string | null;
 }
 
 export class ProjectRepository {
   async listProjects(): Promise<Project[]> {
-    return db.select().from(projects).orderBy(desc(projects.createdAt));
+    return db.select()
+      .from(projects)
+      .where(isNull(projects.archivedAt))
+      .orderBy(desc(projects.createdAt));
   }
 
   async getProjectById(id: string): Promise<Project | null> {
@@ -61,6 +65,9 @@ export class ProjectRepository {
     }
     if (input.defaultBranch !== undefined) {
       updateValues.defaultBranch = input.defaultBranch;
+    }
+    if (input.archivedAt !== undefined) {
+      updateValues.archivedAt = input.archivedAt;
     }
 
     const [updated] = await db

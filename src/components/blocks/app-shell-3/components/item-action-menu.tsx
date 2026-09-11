@@ -1,21 +1,24 @@
 "use client"
 
-import { Fragment } from "react"
-
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarMenuAction } from "@/components/ui/sidebar"
-import { ITEM_ACTIONS } from "./data"
-import { MoreHorizontalIcon } from "lucide-react"
+import { MoreHorizontalIcon, ArchiveIcon, ExternalLinkIcon, PencilIcon, Trash2Icon } from "lucide-react"
 
-export function ItemActionMenu({ label }: { label: string }) {
+interface ProjectActionMenuProps {
+  label: string
+  onOpen: () => void
+  onRename: () => void
+  onArchive: () => void
+  onDelete: () => void
+}
+
+export function ProjectActionMenu({ label, onOpen, onRename, onArchive, onDelete }: ProjectActionMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -32,21 +35,11 @@ export function ItemActionMenu({ label }: { label: string }) {
         sideOffset={4}
         className="w-44"
       >
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-          {ITEM_ACTIONS.map((action) => (
-            <Fragment key={action.id}>
-              {action.destructive && <DropdownMenuSeparator />}
-              <DropdownMenuItem
-                variant={action.destructive ? "destructive" : "default"}
-                className="[&_svg]:size-3.5 [&_svg]:opacity-60"
-              >
-                {action.icon}
-                {action.label}
-              </DropdownMenuItem>
-            </Fragment>
-          ))}
-        </DropdownMenuGroup>
+        <DropdownMenuItem onClick={onOpen}><ExternalLinkIcon />Ouvrir</DropdownMenuItem>
+        <DropdownMenuItem onClick={onRename}><PencilIcon />Renommer</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onArchive}><ArchiveIcon />Archiver</DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" onClick={onDelete}><Trash2Icon />Supprimer</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

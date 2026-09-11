@@ -355,6 +355,9 @@ SQLite stores local operational state.
 Examples include:
 
 -   registered local projects;
+-   the local archive state of a project (archived projects are hidden from the
+    active list and excluded from scheduling, while their repository path and
+    Run history remain recoverable locally);
 -   absolute local repository paths;
 -   runs;
 -   run events;

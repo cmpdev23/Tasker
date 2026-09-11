@@ -28,3 +28,6 @@
 - Les commandes des projets ne doivent pas hériter du mode Node/Next du serveur
   AgentTasker. Vérifier leur environnement avec un hôte en développement et en
   production, puis confirmer les incidents de build sur le contenu réellement échoué.
+- Pour un menu portaled, appliquer le `z-index` au conteneur de positionnement,
+  pas seulement au popup enfant : un enfant ne peut pas sortir du contexte
+  d’empilement de son parent et peut sinon passer derrière la sidebar fixe.

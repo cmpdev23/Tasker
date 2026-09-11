@@ -234,6 +234,16 @@ test("project deletion rejects unverified terminal runs and preserves their reco
   assert.deepEqual(fixture.runRepository.events(run.id), []);
 });
 
+test("project archiving rejects active runs before hiding the project", async () => {
+  const { projectService } = await import("../backend/projects/project.service");
+  const { ConflictError } = await import("../backend/errors");
+  const project = await fixture.project();
+  fixture.runRepository.create(project.id, "queued", "Queued run");
+
+  await assert.rejects(projectService.updateProject(project.id, { archived: true }), ConflictError);
+  assert.equal((await projectService.getProjectById(project.id)).archivedAt, null);
+});
+
 test("history filters by task and exclusive cursor, newest first, with a 200-run page", async () => {
   const project = await fixture.project();
   const expected: string[] = [];

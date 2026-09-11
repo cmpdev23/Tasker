@@ -1,5 +1,5 @@
 import { type ReactNode } from "react"
-import { FolderIcon, SquareCheckIcon, ExternalLinkIcon, UserPlusIcon, FlagIcon, CopyIcon, ArchiveIcon } from "lucide-react"
+import { FolderIcon, SquareCheckIcon } from "lucide-react"
 
 // ── Types ──
 
@@ -31,13 +31,6 @@ export type Project = {
   name: string
   progress: number
   color: string
-}
-
-export type ItemAction = {
-  id: string
-  label: string
-  icon: ReactNode
-  destructive: boolean
 }
 
 // ── Workspaces ──
@@ -92,51 +85,6 @@ export const ACTIVE_PROJECTS: Project[] = [
     name: "Design System",
     progress: 72,
     color: "stroke-blue-500",
-  },
-]
-
-// ── Item Actions ──
-
-export const ITEM_ACTIONS: ItemAction[] = [
-  {
-    id: "open",
-    label: "Open Project",
-    icon: (
-      <ExternalLinkIcon aria-hidden="true" />
-    ),
-    destructive: false,
-  },
-  {
-    id: "assign",
-    label: "Assign Members",
-    icon: (
-      <UserPlusIcon aria-hidden="true" />
-    ),
-    destructive: false,
-  },
-  {
-    id: "milestone",
-    label: "Set Milestone",
-    icon: (
-      <FlagIcon aria-hidden="true" />
-    ),
-    destructive: false,
-  },
-  {
-    id: "duplicate",
-    label: "Duplicate",
-    icon: (
-      <CopyIcon aria-hidden="true" />
-    ),
-    destructive: false,
-  },
-  {
-    id: "archive",
-    label: "Archive",
-    icon: (
-      <ArchiveIcon aria-hidden="true" />
-    ),
-    destructive: true,
   },
 ]
 

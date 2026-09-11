@@ -9,6 +9,7 @@ export interface ProjectItem {
   repositoryPath: string | null;
   createdAt: string;
   updatedAt: string;
+  archivedAt: string | null;
 }
 
 interface ProjectsContextType {
@@ -17,6 +18,8 @@ interface ProjectsContextType {
   error: string | null;
   refreshProjects: () => Promise<void>;
   createProject: (name: string) => Promise<ProjectItem>;
+  updateProject: (id: string, update: { name?: string; archived?: boolean }) => Promise<ProjectItem>;
+  deleteProject: (id: string) => Promise<void>;
 }
 
 const ProjectsContext = createContext<ProjectsContextType | undefined>(undefined);
@@ -74,6 +77,35 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const updateProject = useCallback(
+    async (id: string, update: { name?: string; archived?: boolean }): Promise<ProjectItem> => {
+      const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(update),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: "Failed to update project" }));
+        throw new Error(errData.error || "Failed to update project");
+      }
+      const updated: ProjectItem = await res.json();
+      setProjects((current) => updated.archivedAt
+        ? current.filter((project) => project.id !== updated.id)
+        : current.map((project) => project.id === updated.id ? updated : project));
+      return updated;
+    },
+    [],
+  );
+
+  const deleteProject = useCallback(async (id: string) => {
+    const res = await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({ error: "Failed to delete project" }));
+      throw new Error(errData.error || "Failed to delete project");
+    }
+    setProjects((current) => current.filter((project) => project.id !== id));
+  }, []);
+
   return (
     <ProjectsContext.Provider
       value={{
@@ -82,6 +114,8 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
         error,
         refreshProjects,
         createProject,
+        updateProject,
+        deleteProject,
       }}
     >
       {children}

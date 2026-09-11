@@ -40,6 +40,21 @@ test("recurring registration establishes a baseline; downtime catches up only th
   assert.equal(fixture.runRepository.list(project.id).length, 1);
 });
 
+test("archived projects stay recoverable locally but are excluded from the active list and scheduler", async () => {
+  const { projectService } = await import("../backend/projects/project.service");
+  const project = await fixture.project();
+  await fixture.task(project.id, daily);
+  await evaluate("2026-09-09T12:00:00Z");
+
+  const archived = await projectService.updateProject(project.id, { archived: true });
+  assert.ok(archived.archivedAt);
+  assert.deepEqual(await projectService.listProjects(), []);
+  assert.equal((await projectService.getProjectById(project.id)).archivedAt, archived.archivedAt);
+
+  await evaluate("2026-09-10T12:00:00Z");
+  assert.deepEqual(fixture.runRepository.list(project.id), []);
+});
+
 test("pending runs coalesce missed occurrences; finishing one permits the next scheduled day", async () => {
   const project = await fixture.project();
   const task = await fixture.task(project.id, daily);

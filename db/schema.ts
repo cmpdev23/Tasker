@@ -7,6 +7,7 @@ export const projects = sqliteTable("projects", {
   slug: text("slug").notNull().unique(),
   repositoryPath: text("repository_path"),
   defaultBranch: text("default_branch"),
+  archivedAt: text("archived_at"),
   createdAt: text("created_at")
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),

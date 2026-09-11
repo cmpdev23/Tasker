@@ -25,6 +25,7 @@ export interface UpdateProjectDTO {
   slug?: string;
   repositoryPath?: string | null;
   defaultBranch?: string | null;
+  archived?: boolean;
 }
 
 export function slugify(text: string): string {
@@ -109,6 +110,7 @@ export class ProjectService {
       slug?: string;
       repositoryPath?: string | null;
       defaultBranch?: string | null;
+      archivedAt?: string | null;
     } = {};
 
     if (dto.name !== undefined) {
@@ -138,6 +140,16 @@ export class ProjectService {
 
     if (dto.defaultBranch !== undefined) {
       updateData.defaultBranch = dto.defaultBranch ? dto.defaultBranch.trim() : null;
+    }
+
+    if (dto.archived !== undefined) {
+      if (typeof dto.archived !== "boolean") {
+        throw new ValidationError("Project archive status must be a boolean.");
+      }
+      if (dto.archived && hasActiveRuns(id)) {
+        throw new ConflictError("Finish or cancel active runs before archiving the project.");
+      }
+      updateData.archivedAt = dto.archived ? new Date().toISOString() : null;
     }
 
     const updated = await this.repo.updateProject(id, updateData);
