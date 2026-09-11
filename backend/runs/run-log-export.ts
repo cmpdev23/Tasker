@@ -33,6 +33,32 @@ export function prettyJson(value: unknown): string {
   }
 }
 
+/**
+ * Strips raw base-85 binary patch blocks from git diffs, which can otherwise
+ * produce tens of thousands of lines of unreadable binary chunks for images or media.
+ */
+export function stripBinaryDiff(diff: string): string {
+  if (!diff || !diff.includes("GIT binary patch")) return diff;
+  return diff
+    .replace(/GIT binary patch\r?\n(?:(?!diff --git)[\s\S])*/g, "[GIT binary patch omitted]\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Truncates inline base64 media payloads to keep text logs clean and lightweight.
+ */
+export function sanitizeLogPayload(payload: string): string {
+  if (!payload || typeof payload !== "string") return payload;
+  return payload.replace(
+    /data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]{128,}/g,
+    (match) => {
+      const prefix = match.slice(0, match.indexOf(";base64,") + 8);
+      return `${prefix}[base64 data omitted (${match.length} chars)]`;
+    }
+  );
+}
+
 export function formatRunLog(run: Run, events: RunEvent[]): string {
   const lines: string[] = [];
   lines.push("=".repeat(80));
@@ -88,7 +114,7 @@ export function formatRunLog(run: Run, events: RunEvent[]): string {
     lines.push("-".repeat(80));
     lines.push("GIT CHANGES / DIFF");
     lines.push("-".repeat(80));
-    lines.push(run.diff.trim());
+    lines.push(stripBinaryDiff(run.diff.trim()));
     lines.push("");
   }
 
@@ -97,9 +123,9 @@ export function formatRunLog(run: Run, events: RunEvent[]): string {
   lines.push("=".repeat(80));
 
   for (const event of events) {
-    lines.push(`[${event.timestamp}] [${event.type}] ${event.message}`);
+    lines.push(`[${event.timestamp}] [${event.type}] ${sanitizeLogPayload(event.message)}`);
     if (event.rawPayload && event.rawPayload.trim() !== event.message.trim()) {
-      const formatted = prettyJson(event.rawPayload);
+      const formatted = prettyJson(sanitizeLogPayload(event.rawPayload));
       const indented = formatted.split(/\r?\n/).map((line) => `    ${line}`).join("\n");
       lines.push(indented);
     }

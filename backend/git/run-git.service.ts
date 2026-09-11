@@ -167,7 +167,7 @@ export async function verifyRunWorktree(worktree: RunWorktree, signal?: AbortSig
 export async function inspectRunChanges(worktree: RunWorktree, signal?: AbortSignal) {
   await verifyRunWorktree(worktree, signal);
   const status = await git(worktree.worktreePath, ["status", "--porcelain=v1", "--untracked-files=all"], signal);
-  const diff = await git(worktree.worktreePath, ["diff", "--no-ext-diff", "--no-textconv", "--binary", worktree.baseCommit, "--"], signal);
+  const diff = await git(worktree.worktreePath, ["diff", "--no-ext-diff", "--no-textconv", worktree.baseCommit, "--"], signal);
   return { status, diff, hasChanges: status.length > 0 || diff.length > 0 };
 }
 
@@ -206,7 +206,7 @@ export async function finalizeRunWorktree(worktree: RunWorktree, options: Finali
     }
     result.status = await git(worktree.worktreePath, ["status", "--porcelain=v1", "--untracked-files=all"], signal);
     if (result.status) throw new Error("Worktree changed during commit; preserved for review.");
-    result.diff = await git(worktree.worktreePath, ["diff", "--no-ext-diff", "--no-textconv", "--binary", worktree.baseCommit, commitSha, "--"], signal);
+    result.diff = await git(worktree.worktreePath, ["diff", "--no-ext-diff", "--no-textconv", worktree.baseCommit, commitSha, "--"], signal);
     return { ...result, success: true };
   } catch (error) {
     return { ...result, success: false, error: error instanceof Error ? error.message : String(error) };

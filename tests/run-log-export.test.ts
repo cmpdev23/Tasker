@@ -10,12 +10,14 @@ let database: Awaited<ReturnType<typeof isolatedRunner>>;
 let formatRunLog: typeof import("../backend/runs/run-log-export").formatRunLog;
 let formatDuration: typeof import("../backend/runs/run-log-export").formatDuration;
 let saveRunLogs: typeof import("../backend/runs/run-log-export").saveRunLogs;
+let stripBinaryDiff: typeof import("../backend/runs/run-log-export").stripBinaryDiff;
+let sanitizeLogPayload: typeof import("../backend/runs/run-log-export").sanitizeLogPayload;
 let runRepository: typeof import("../backend/runs/run.repository").runRepository;
 let projectService: typeof import("../backend/projects/project.service").projectService;
 let logsRouteHandler: typeof import("../src/app/api/projects/[id]/runs/[runId]/logs/route").POST;
 before(async () => {
   database = await isolatedRunner();
-  ({ formatRunLog, formatDuration, saveRunLogs } = await import("../backend/runs/run-log-export"));
+  ({ formatRunLog, formatDuration, saveRunLogs, stripBinaryDiff, sanitizeLogPayload } = await import("../backend/runs/run-log-export"));
   ({ runRepository } = await import("../backend/runs/run.repository"));
   ({ projectService } = await import("../backend/projects/project.service"));
   ({ POST: logsRouteHandler } = await import("../src/app/api/projects/[id]/runs/[runId]/logs/route"));
@@ -39,6 +41,39 @@ test("formatDuration formats seconds, minutes and hours clearly", () => {
   assert.equal(formatDuration(125000), "2m 5s");
   assert.equal(formatDuration(3661000), "1h 1m");
   assert.equal(formatDuration(-1), "—");
+});
+
+test("stripBinaryDiff replaces GIT binary patch data blocks with clean placeholder", () => {
+  const binaryDiff = [
+    "diff --git a/image.png b/image.png",
+    "new file mode 100644",
+    "index 0000000..84f29a1",
+    "GIT binary patch",
+    "literal 12345",
+    "z^aX08-#nRw%Ybi|2OO~|osnr9-ah;9p?D$n(dQ?dL84f|31_@~O}|*1%@Ncrur7g*",
+    "zivM9H;+JEYeTQjqmMeeucI@U0WaLVrIltxn*PhOy%PlZ^10?EiGw)x7)!Md5WwJki",
+    "",
+    "diff --git a/src/article.mdx b/src/article.mdx",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/article.mdx",
+    "@@ -0,0 +1 @@",
+    "+# Title",
+  ].join("\n");
+
+  const cleaned = stripBinaryDiff(binaryDiff);
+  assert.ok(!cleaned.includes("z^aX08-#nRw"));
+  assert.ok(!cleaned.includes("zivM9H;+JEYe"));
+  assert.ok(cleaned.includes("[GIT binary patch omitted]"));
+  assert.ok(cleaned.includes("diff --git a/src/article.mdx b/src/article.mdx"));
+  assert.ok(cleaned.includes("+# Title"));
+});
+
+test("sanitizeLogPayload truncates large base64 image data URIs", () => {
+  const largeBase64 = "data:image/png;base64," + "A".repeat(500);
+  const sanitized = sanitizeLogPayload(`Screenshot captured: ${largeBase64}`);
+  assert.ok(!sanitized.includes("A".repeat(50)));
+  assert.ok(sanitized.includes("[base64 data omitted (522 chars)]"));
 });
 
 test("formatRunLog formats comprehensive text log including metadata, config, diff, and events", () => {
