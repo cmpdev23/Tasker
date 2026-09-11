@@ -94,6 +94,18 @@ function resolveLaunch(manager: PackageManager, args: string[]): Launch {
 
 function commandEnvironment(): NodeJS.ProcessEnv {
   const env = runGitEnvironment();
+  // Next mutates the server's environment (next dev sets NODE_ENV=development).
+  // A nested next build would keep that mode, mix React runtimes and fail at
+  // prerendering. Production hosts can also cause installs to omit devDependencies.
+  // Let each project command choose its own mode and load its own environment.
+  // Keep public project variables, credentials and user-supplied NODE_OPTIONS.
+  for (const key of Object.keys(env)) {
+    const normalized = key.toUpperCase();
+    if (normalized === "NODE_ENV" || normalized === "NEXT_RUNTIME" ||
+        normalized === "TURBOPACK" || normalized.startsWith("__NEXT_")) {
+      delete env[key];
+    }
+  }
   const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? (process.platform === "win32" ? "Path" : "PATH");
   const nodeDirectory = path.dirname(process.execPath);
   const entries = (env[key] || "").split(path.delimiter).filter(Boolean);

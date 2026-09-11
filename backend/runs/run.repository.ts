@@ -60,6 +60,10 @@ export const runRepository = {
     return db.select().from(runEvents).where(and(eq(runEvents.runId, runId), gt(runEvents.id, after)))
       .orderBy(asc(runEvents.id)).limit(500).all();
   },
+  allEvents(runId: string) {
+    return db.select().from(runEvents).where(eq(runEvents.runId, runId))
+      .orderBy(asc(runEvents.id)).all();
+  },
   active() { return db.select().from(runs).where(inArray(runs.status, EXECUTING_STATUSES)).all(); },
   unverifiedTermination() {
     return db.select().from(runs).where(eq(runs.terminationVerified, false))

@@ -2,8 +2,9 @@ import type { Run } from "@db/schema";
 import { AlertCircleIcon, CheckCircle2Icon, CircleStopIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseRunResult } from "./event-normalizer";
+import type { ProjectCommandActivity } from "./project-command-events";
 
-export function RunSummary({ run }: { run: Run }) {
+export function RunSummary({ run, failedCommand }: { run: Run; failedCommand?: ProjectCommandActivity }) {
   const result = parseRunResult(run.result);
   const summary = result?.summary.replace(/\[([^\]]+)]\([^\s)]+\)/g, "$1");
   const firstParagraph = summary?.split(/\r?\n\s*\r?\n/)[0] ?? summary;
@@ -14,7 +15,9 @@ export function RunSummary({ run }: { run: Run }) {
   const success = run.status === "SUCCESS";
   if (!failed && !cancelled && !success && !result) return null;
   const Icon = failed ? AlertCircleIcon : cancelled ? CircleStopIcon : CheckCircle2Icon;
-  const title = failed ? "Le Run a échoué" : cancelled ? "Le Run a été annulé" : "Résultat";
+  const title = failed && failedCommand
+    ? failedCommand.phase === "validation" ? "La validation du projet a échoué" : "L’installation des dépendances a échoué"
+    : failed ? "Le Run a échoué" : cancelled ? "Le Run a été annulé" : "Résultat";
   return (
     <section aria-labelledby="run-result-title" className={cn(
       "border-l-2 py-1 pl-4",
@@ -24,6 +27,9 @@ export function RunSummary({ run }: { run: Run }) {
         <Icon className={cn("mt-0.5 size-4 shrink-0", failed ? "text-destructive" : cancelled ? "text-muted-foreground" : "text-success")} />
         <div className="min-w-0">
           <h2 id="run-result-title" className={cn("text-sm font-medium", failed && "text-destructive")}>{title}</h2>
+          {failed && failedCommand?.phase === "validation" && result?.status === "SUCCESS" && run.exitCode === 0 && (
+            <p className="mt-1.5 text-sm leading-6">Codex a terminé son travail (code 0), mais la commande <code>{failedCommand.command}</code> n’a pas réussi. Le travail reste dans le worktree pour inspection.</p>
+          )}
           {summaryLead && <p className="mt-1.5 max-w-2xl whitespace-pre-wrap break-words text-sm leading-6 text-foreground/90">{summaryLead}</p>}
           {longSummary && (
             <details className="mt-2 text-xs">

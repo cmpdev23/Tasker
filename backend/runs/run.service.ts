@@ -6,6 +6,7 @@ import { logRunDebug } from "./run-logger";
 import { projectService } from "../projects/project.service";
 import { deleteRunArtifacts } from "../git/run-git.service";
 import { RUNNER_CONFIG } from "./runner-config";
+import { saveRunLogs } from "./run-log-export";
 import path from "node:path";
 
 export const runService = {
@@ -111,5 +112,8 @@ export const runService = {
       terminationConfirmedDuringRemoval: Boolean(options.confirmTermination),
     });
     return removed;
+  },
+  saveLogs(projectId: string, runId: string) {
+    return saveRunLogs(projectId, runId);
   },
 };

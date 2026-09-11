@@ -207,6 +207,16 @@ le worktree, avant Codex, `npm ci`, `pnpm install --frozen-lockfile`,
 le `PATH` du sous-processus depuis le runtime qui exécute AgentTasker; son chemin
 absolu reste une donnée de machine et n’est jamais écrit dans `.tasker/`.
 
+Les commandes de préparation et de validation disposent d’un environnement distinct
+du serveur Next.js d’AgentTasker : `NODE_ENV`, `NEXT_RUNTIME`, `TURBOPACK` et les
+marqueurs internes `__NEXT_*` hérités sont retirés de la copie passée au sous-processus.
+Chaque outil choisit ainsi son mode (`next build` choisit `production`, un outil de
+test peut choisir `test`), quel que soit le mode de lancement d’AgentTasker. Aucun
+mode n’est imposé selon le nom du script. L’environnement du serveur reste inchangé;
+les variables publiques du projet, les credentials existants et `NODE_OPTIONS`
+sont conservés. Aucun fichier de secrets n’est copié dans le worktree. Les scripts
+peuvent définir explicitement leur propre mode lorsqu’ils en ont besoin.
+
 `validation_scripts` contient uniquement des noms de scripts `package.json`, pas
 des commandes shell arbitraires. Le worker exécute chaque entrée en ordre avec
 `<package_manager> run <script>` après la sortie positive de Codex et avant le
@@ -214,6 +224,20 @@ commit. Un échec, une annulation ou un délai dépassé interrompt la chaîne. 
 stderr, début, fin et terminaison sont persistés dans les événements du Run. Les
 réglages résolus sont également figés dans le snapshot du Run et visibles dans son
 inspecteur. Les futurs overrides par Task ne sont pas encore implémentés.
+
+Les événements `preparation` et `validation` contiennent aussi un rapport structuré
+par commande : phase, commande, état, code de sortie, durée et erreur. Le Run Inspector
+affiche ces commandes et leurs sorties séparément du résultat Codex, y compris pour
+les anciens Runs à événements textuels. `Run.exitCode` est explicitement le code
+**Codex** : zéro ne signifie pas que le build ou les autres validations ont réussi.
+Une commande sans résultat terminal ne devient jamais un succès par déduction.
+
+L’incident du 11 septembre 2026 (Run `b87c5b31…62af`) a confirmé ce besoin : Codex
+avait créé l’article et sa couverture, puis `npm run build` héritait du mode
+développement du serveur et échouait au prérendu avec `useContext`. Le même build
+sur le worktree préservé a reproduit l’échec avant le correctif et réussi après
+isolation de l’environnement, sans changer le contenu produit ni le statut historique.
+Voir [le diagnostic et les vérifications](run-build-environment.md).
 
 Le succès requiert : préparation réussie lorsqu’elle est activée, sortie Codex
 zéro, résultat structuré valide et positif, toutes les validations configurées
@@ -286,6 +310,11 @@ succès à nettoyer manuellement. Les branches de Run sont toujours conservées.
 concurrence, événements, redémarrage, parsing des réglages d’exécution, résolution
 des commandes de paquets, Git réel avec remote local jetable et arrêt de véritables
 arbres de processus de test. Ces tests n’utilisent pas de modèle.
+Le lanceur fournit toujours une base et un runtime temporaires avant tout import
+backend. Chaque test SQLite initialise aussi sa fixture avant ses imports dynamiques;
+les tests d’export de logs suivent cette même règle. Le test du worker complet couvre
+installation, sortie Codex simulée, validation réelle par npm, commit et conservation
+du travail en cas d’échec, depuis un hôte en mode développement.
 
 Les scripts `prepare-real-run-smoke.mjs`, `start-smoke-server.mjs` et
 `real-run-browser-smoke.mjs` permettent un test réel volontaire avec
@@ -301,7 +330,7 @@ fichier de test, SUCCESS et commit automatique, sans modifier le checkout princi
 `real-run-cancel-smoke.mjs` a ensuite confirmé l’annulation d’un véritable processus
 Codex depuis le Sheet, avec terminaison vérifiée et worktree conservé.
 Le redémarrage en production a conservé la Task et les 61 événements du Run réussi.
-La validation locale actuelle comprend 74 tests réussis, un test de symlink ignoré
+La validation locale actuelle comprend 84 tests réussis, un test de symlink ignoré
 faute de privilèges Windows, ainsi que les contrôles TypeScript et ESLint.
 Une seconde exécution réelle réussie a vérifié le contrôle renforcé des descendants
 après sortie normale de Codex, avec terminaison vérifiée et nettoyage du worktree.

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "../../db/client";
 import { runnerLock, type Run } from "../../db/schema";
+import type { ProjectCommandReport } from "../../src/types/project-command";
 import { projectService } from "../projects/project.service";
 import { taskService } from "../tasks/task.service";
 import { readString, sectionContent } from "../tasks/toml";
@@ -38,13 +39,22 @@ function readProjectFile(repo: string, relative: string): string {
   return fs.readFileSync(file, "utf8");
 }
 
-export async function executeRun(run: Run, controller = new AbortController()) {
+export async function executeRun(run: Run, controller = new AbortController(), executeCodex = runCodex) {
   let worktree: RunWorktree | undefined;
   const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
   const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
     if (!worktree) throw new Error("Project commands require a prepared worktree.");
     const display = `${command.executable} ${command.args.join(" ")}`;
-    event(phase, `Starting ${command.name}: ${display}`);
+    const startedAt = Date.now();
+    let reported = false;
+    const report = (status: ProjectCommandReport["status"], exitCode: number | null, error: string | null) => {
+      const entry: ProjectCommandReport = { kind: "project-command", phase, command: display,
+        status, exitCode, durationMs: status === "running" ? null : Date.now() - startedAt, error };
+      event(phase, `${status === "running" ? "Starting" : status === "success" ? "Completed" : "Failed"} ${command.name}: ${display}`,
+        JSON.stringify(entry));
+      if (status !== "running") reported = true;
+    };
+    report("running", null, null);
     // Persist before spawn so a server crash never certifies an unknown child process as stopped.
     runRepository.update(run.id, { terminationVerified: false });
     try {
@@ -66,14 +76,17 @@ export async function executeRun(run: Run, controller = new AbortController()) {
         terminationVerified: result.terminationVerified,
       });
       if (result.cancelled || result.timedOut || result.exitCode !== 0 || result.error) {
-        throw new Error(result.error || (result.cancelled
+        const error = result.error || (result.cancelled
           ? `${command.name} was cancelled.`
           : result.timedOut
             ? `${command.name} timed out after ${Math.round(command.timeoutMs / 60_000)} minutes.`
-            : `${command.name} failed.`));
+            : `${command.name} failed.`);
+        report(result.cancelled ? "cancelled" : result.timedOut ? "timed-out" : "failed", result.exitCode, error);
+        throw new Error(error);
       }
-      event(phase, `Completed ${command.name}: ${display}`);
+      report("success", result.exitCode, null);
     } catch (error) {
+      if (!reported) report("failed", null, error instanceof Error ? error.message : String(error));
       const current = runRepository.get(run.projectId, run.id);
       if (!current.codexPid) runRepository.update(run.id, { terminationVerified: true });
       throw error;
@@ -123,7 +136,7 @@ export async function executeRun(run: Run, controller = new AbortController()) {
     fs.writeFileSync(outputSchemaPath, JSON.stringify(CODEX_RUN_OUTPUT_SCHEMA));
     // Persist before spawn: a server crash must never certify unknown descendants as stopped.
     runRepository.update(run.id, { terminationVerified: false });
-    const result = await runCodex({ worktreePath: worktree.worktreePath, prompt, config: main, outputSchemaPath,
+    const result = await executeCodex({ worktreePath: worktree.worktreePath, prompt, config: main, outputSchemaPath,
       timeoutMs, signal: controller.signal, onEvent: (entry) => {
         if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
         if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);

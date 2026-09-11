@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Run, RunEvent } from "@db/schema";
 import type { RunQueueEntry, RunQueueStatus } from "@/types/run-queue";
 import { AlertCircleIcon, Loader2Icon, Trash2Icon } from "lucide-react";
+import { toast } from "sonner";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { errorMessage, isActiveRun, isRemovableRun, taskRequest } from "@/components/task-ui-utils";
@@ -15,6 +16,8 @@ import { RawEvents } from "@/components/run-inspector/raw-events";
 import { RunHeader } from "@/components/run-inspector/run-header";
 import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
 import { RunSummary } from "@/components/run-inspector/run-summary";
+import { projectCommandActivities } from "@/components/run-inspector/project-command-events";
+import { ProjectCommands } from "@/components/run-inspector/project-commands";
 
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
 
@@ -36,6 +39,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
   const [cancelling, setCancelling] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [savingLogs, setSavingLogs] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(initialRun.cancelRequested);
   const [follow, setFollow] = useState(() => isActiveRun(initialRun.status));
   // The Sheet is mounted only after a client-side selection, so this does not
@@ -49,6 +53,8 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
     [events, run.worktreePath, terminal],
   );
   const changedFiles = useMemo(() => changedFileCount(run.diff), [run.diff]);
+  const commands = useMemo(() => projectCommandActivities(events, run), [events, run]);
+  const failedCommand = commands.find(command => command.status === "failed" || command.status === "timed-out");
 
   useEffect(() => {
     if (!isActiveRun(run.status)) return;
@@ -111,6 +117,22 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
       setCancelError(errorMessage(caught));
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function saveLogs() {
+    if (savingLogs) return;
+    setSavingLogs(true);
+    try {
+      const data = await taskRequest<{ success: boolean; filePath: string; filename: string }>(
+        `${runUrl}/logs`,
+        { method: "POST" },
+      );
+      toast.success(`Logs enregistrés dans ${data.filePath}`);
+    } catch (caught) {
+      toast.error(errorMessage(caught));
+    } finally {
+      setSavingLogs(false);
     }
   }
 
@@ -186,9 +208,11 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
           cancelRequested={cancelRequested}
           deleting={deleting}
           rerunning={rerunning}
+          savingLogs={savingLogs}
           onCancel={cancel}
           onDelete={isRemovableRun(run) ? () => void removeRun() : undefined}
           onRerun={onRerun}
+          onSaveLogs={saveLogs}
         />
         {run.status === "QUEUED" && queue && (
           <div className="shrink-0 border-b px-5 py-3 sm:px-7">
@@ -237,7 +261,8 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
             )}
             {cancelError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{cancelError}</p>}
             {deleteError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{deleteError}</p>}
-            <RunSummary run={run} />
+            <RunSummary run={run} failedCommand={failedCommand} />
+            <ProjectCommands commands={commands} />
             <ExecutionDetails run={run} />
             <ActivityFeed activities={activities} loading={loading} active={isActiveRun(run.status)} follow={follow} onFollowChange={setFollow} />
             <div ref={activityEnd} aria-hidden />

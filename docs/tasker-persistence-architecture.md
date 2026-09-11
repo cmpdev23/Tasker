@@ -58,6 +58,8 @@ cmt/
 ├── .tasker/
 │   ├── project.toml
 │   ├── instructions.md
+│   ├── logs/
+│   │   └── <task-id>_<run-id>.txt
 │   │
 │   └── tasks/
 │       ├── create-seo-page/

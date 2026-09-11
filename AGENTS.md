@@ -74,6 +74,7 @@ valeurs codées en dur dans le produit.
 - Le Sheet live est un Run Inspector : `src/components/run-inspector/` normalise les événements JSONL Codex, regroupe le cycle des items et rend une timeline humaine avec détails techniques secondaires. Le protocole supporté et ses limites sont documentés dans `docs/codex-run-events.md`.
 - Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée. Ils constituent la transposition UI du timer systemd et du runner unique de la référence Linux.
 - Les Settings d’exécution versionnent dans `.tasker/project.toml` le gestionnaire de paquets, l’installation verrouillée optionnelle, les scripts `package.json` de validation et leurs délais. Le worker les exécute hors du sandbox Codex, dans le worktree, avant le commit.
+- Les commandes d’installation/validation choisissent leur propre mode : la copie d’environnement retire `NODE_ENV`, `NEXT_RUNTIME`, `TURBOPACK` et `__NEXT_*` hérités du serveur AgentTasker. Ne jamais transmettre le mode de `next dev` au build du projet. Le Run Inspector sépare le code de sortie Codex des résultats et sorties de chaque commande, avec compatibilité des anciens Runs; voir `docs/run-build-environment.md`.
 - Le succès exige une préparation réussie lorsqu’activée, une sortie structurée positive, toutes les validations configurées et les contrôles Git ; le worker commit sans push/merge. Les échecs/annulations préservent le worktree. Au redémarrage, le worker vérifie l’arbre de processus enregistré avant de reprendre la queue ; lorsqu’une ancienne terminaison ne peut plus être vérifiée automatiquement, le Sheet exige une confirmation locale explicite avant la reprise. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
 
 ## Direction d’implémentation
@@ -112,6 +113,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 - `npm run lint` exécute ESLint.
 - `npm run build` génère la version de production.
 - `npm run typecheck` vérifie TypeScript ; `npm test` lance les tests filesystem, horaires, SQLite, Git et processus sur des fixtures temporaires. Le Node.js utilisé doit correspondre au binaire natif `better-sqlite3` installé.
+- Le lanceur de tests impose une base/runtime jetables; les tests SQLite doivent en plus initialiser leur fixture avant tout import backend, y compris transitif.
 - Le runner requiert un serveur Node persistant et Codex authentifié. `DATABASE_PATH` configure la base ; `AGENTTASKER_DATA_DIR` peut définir un runtime externe aux dépôts. `.test-artifacts/` contient les résultats locaux ignorés des smoke tests volontaires.
 
 ## Prochaines étapes

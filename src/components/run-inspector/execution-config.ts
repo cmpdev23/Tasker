@@ -101,7 +101,7 @@ export function runExecutionRows(run: Run, config = resolvedExecutionConfig(run.
     ["Commit de base", run.baseCommit || "Non renseigné"],
     ["Branche du Run", run.runBranch || "Non renseignée"],
     ["Worktree", run.worktreePath || "Non renseigné"],
-    ["Code de sortie", run.exitCode == null ? "Non renseigné" : String(run.exitCode)],
+    ["Code de sortie Codex", run.exitCode == null ? "Non renseigné" : String(run.exitCode)],
     ["Commit produit", run.commitHash || "Aucun"],
   ] as const;
 }

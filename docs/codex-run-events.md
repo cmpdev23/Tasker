@@ -161,6 +161,23 @@ blocs JSON pendant le suivi normal. Cette approche reste linéaire et adaptée a
 Runs de 100 à 1 000+ événements sans introduire une couche de virtualisation
 prématurée.
 
+## Commandes gérées par AgentTasker
+
+La section « Installation et validations du projet » utilise les événements du
+runner, indépendamment du protocole Codex. Les événements `preparation` et
+`validation` conservent leur message lisible et ajoutent un `rawPayload` avec
+`kind: "project-command"`, `phase`, `command`, `status`, `exitCode`, `durationMs`
+et `error`. Les états sont `running`, `success`, `failed`, `cancelled`, `timed-out`.
+Aucune valeur d’environnement n’est incluse dans ces rapports.
+
+Les fragments stdout/stderr préfixés par la phase sont rattachés à la commande
+active, avec un extrait des 12 000 derniers caractères dans l’UI et les logs complets
+toujours disponibles. L’échec ouvre cet extrait directement. Les anciens événements
+`Starting`/`Completed` sont également lus; leur code d’échec peut être retrouvé dans
+l’erreur finale exacte du runner. Un résultat absent reste non confirmé. Le libellé
+« Code de sortie Codex » et le résumé distinguent un agent terminé avec code zéro
+d’une validation indépendante échouée. Aucun nouveau type Codex n’est supposé.
+
 ## Fallback et compatibilité future
 
 Tout événement top-level ou `item.type` inconnu produit un `FallbackEvent` avec

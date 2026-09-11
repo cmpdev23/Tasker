@@ -21,3 +21,10 @@
   natif `better-sqlite3` installé, idéalement celui du serveur de développement déjà
   actif. Une série d’erreurs `NODE_MODULE_VERSION` indique un mauvais runtime de
   test, pas des régressions applicatives.
+- Toute suite de tests doit définir une base temporaire avant l’import d’un module
+  backend, y compris les imports transitifs. Le lanceur de suite doit aussi fournir
+  une base jetable par défaut afin qu’un nouveau test ne puisse pas écrire dans la
+  base utilisateur.
+- Les commandes des projets ne doivent pas hériter du mode Node/Next du serveur
+  AgentTasker. Vérifier leur environnement avec un hôte en développement et en
+  production, puis confirmer les incidents de build sur le contenu réellement échoué.

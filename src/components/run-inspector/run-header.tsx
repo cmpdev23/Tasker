@@ -1,5 +1,5 @@
 import type { Run } from "@db/schema";
-import { Loader2Icon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { FileTextIcon, Loader2Icon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
@@ -7,7 +7,7 @@ import { displayModel, resolvedExecutionConfig } from "./execution-config";
 import { formatRunElapsed, shortId } from "./format";
 import { RunStatusBadge } from "./run-status-badge";
 
-export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, onCancel, onDelete, onRerun }: {
+export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, savingLogs, onCancel, onDelete, onRerun, onSaveLogs }: {
   run: Run;
   now: number | null;
   changedFiles: number;
@@ -15,9 +15,11 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
   cancelRequested: boolean;
   deleting: boolean;
   rerunning: boolean;
+  savingLogs?: boolean;
   onCancel: () => void;
   onDelete?: () => void;
   onRerun?: () => void;
+  onSaveLogs?: () => void;
 }) {
   const config = resolvedExecutionConfig(run.resolvedConfig);
   const meta = [
@@ -51,7 +53,19 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
             </p>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2 self-start">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 self-start">
+          {onSaveLogs && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={savingLogs}
+              onClick={onSaveLogs}
+              title="Enregistrer les logs pertinents dans .tasker/logs/"
+            >
+              {savingLogs ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <FileTextIcon data-icon="inline-start" />}
+              {savingLogs ? "Enregistrement…" : "Enregistrer les logs"}
+            </Button>
+          )}
           {isRerunnableRun(run.status) && onRerun && (
             <Button
               variant="outline"
