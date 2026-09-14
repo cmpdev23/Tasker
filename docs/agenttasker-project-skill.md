@@ -45,6 +45,11 @@ Runs, la queue, les logs, les worktrees ou les intégrations locales.
 
 ## Installer dans un dépôt géré
 
+Le parcours normal est maintenant `agenttasker init`: la CLI initialise `.tasker/`,
+installe la copie canonique livrée avec l’application et enregistre le Project
+localement. La commande ci-dessous reste utile pour installer uniquement le skill
+depuis une copie source d’AgentTasker.
+
 Depuis une copie locale du dépôt AgentTasker, exécuter :
 
 ```powershell

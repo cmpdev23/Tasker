@@ -70,6 +70,7 @@ valeurs codées en dur dans le produit.
 - `src/components/ui/` contient les primitives shadcn ; `src/components/reui/` contient les primitives ReUI.
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
 - SQLite/Drizzle, la gestion des Projects (renommage, archivage local et suppression protégée des Runs actifs), l'initialisation `.tasker/`, les Instructions, les Settings Git/exécution et la tab Agents sont implémentés.
+- La CLI `agenttasker init` initialise un dépôt Git de façon idempotente, installe le skill canonique, ajoute uniquement `/.tasker/logs/` au `.gitignore` et dépose une demande d’enregistrement hors dépôt. L’application importe ces demandes dans SQLite lors du chargement des Projects, sans coupler la CLI au schéma de base; voir `docs/cli-onboarding.md`.
 - La tab Agents édite `.tasker/agents/main.toml` et les sous-agents TOML, avec découverte locale des modèles via `codex app-server` / `model/list`.
 - La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/hourly/daily/weekly, Run now, la réexécution des Runs échoués, un Sheet live et l’historique. Les Runs en file affichent leur position et les blocages globaux; une terminaison non vérifiée apparaît comme pipeline bloqué lorsqu’un Run attend, ou comme récupération requise lorsqu’il n’y en a aucun. Un Run terminal sans PID connu expose directement deux choix : conserver son travail et débloquer la queue, ou confirmer l’arrêt puis supprimer le Run, son worktree et sa branche en une seule action destructive. Aucune de ces actions ne recrée ni ne relance la Task. Réexécuter reste une action séparée qui crée un nouveau Run depuis la configuration actuelle.
 - La tab Sequences fournit le CRUD versionné `.tasker/sequences/`, un éditeur de `SequenceSteps` ordonnées, une stratégie de PR configurable (une PR finale ou des PR empilées par étape), Run Sequence, la progression par étape et l’historique séparé. Un Run de Sequence conserve le worker, le worktree et la branche pendant toutes ses étapes; chaque étape réussie est validée et commitée avant la suivante. Un échec arrête la chaîne et marque les suivantes `SKIPPED`; les PR d'étapes déjà publiées demeurent récupérables. Voir `docs/sequence-architecture.md`.
@@ -115,6 +116,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 ## Commandes
 
 - `npm run dev` lance l’application sur `http://localhost:5000`.
+- `.\agenttasker.cmd init <repository>` (Windows) ou `node bin/agenttasker.mjs init <repository>` lance l’onboarding CLI depuis le dépôt source; la distribution desktop devra exposer le même fichier comme commande `agenttasker` dans le `PATH`.
 - `npm run lint` exécute ESLint.
 - `npm run build` génère la version de production.
 - `npm run typecheck` vérifie TypeScript ; `npm test` lance les tests filesystem, horaires, SQLite, Git et processus sur des fixtures temporaires. Le Node.js utilisé doit correspondre au binaire natif `better-sqlite3` installé.
@@ -128,6 +130,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 3. Ajouter la rétention configurable des logs/branches/worktrees.
 4. Étendre les références et les sous-agents personnalisés sans abstraction multi-provider.
 5. Ajouter, si souhaité, la planification des Sequences sans les coupler aux Tasks.
+6. Intégrer la commande `agenttasker` aux installateurs desktop Windows, macOS et Linux.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

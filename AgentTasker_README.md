@@ -511,10 +511,14 @@ GitHub CLI/API when GitHub integration is enabled
 A desirable eventual experience is:
 
 ```bash
-npx agenttasker
+agenttasker init
 ```
 
-which starts the local service and prints its localhost URL.
+The repository onboarding CLI is now implemented without adding AgentTasker to the
+managed project's package dependencies. It initializes the portable configuration,
+installs the bundled project skill, ignores exported logs, and queues local Project
+registration for the application. Desktop packaging still needs to expose the
+bundled CLI on the user's `PATH`.
 
 ## 18. Native Codex integration
 

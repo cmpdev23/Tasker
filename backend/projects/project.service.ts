@@ -7,11 +7,24 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { db } from "@db/client";
 import { runs } from "@db/schema";
 import { and, eq, inArray, or } from "drizzle-orm";
+import fs from "node:fs";
+import path from "node:path";
+import { importPendingProjectRegistrations } from "./project-registration.service";
 
 function hasActiveRuns(id: string) {
   return Boolean(db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, id),
     or(inArray(runs.status, ["QUEUED", "PREPARING", "RUNNING", "VALIDATING"]),
       eq(runs.terminationVerified, false)))).get());
+}
+
+function repositoryIdentity(repositoryPath: string): string {
+  let normalized = path.resolve(repositoryPath.trim());
+  try {
+    normalized = fs.realpathSync(normalized);
+  } catch {
+    // A temporarily unavailable checkout should still compare by normalized path.
+  }
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 export interface CreateProjectDTO {
@@ -47,6 +60,27 @@ export class ProjectService {
   constructor(private readonly repo: ProjectRepository = projectRepository) {}
 
   async listProjects(): Promise<Project[]> {
+    await importPendingProjectRegistrations(async (registration) => {
+      const projects = await this.repo.listAllProjects();
+      const registrationIdentity = repositoryIdentity(registration.repositoryPath);
+      const existing = projects.find((project) =>
+        project.repositoryPath && repositoryIdentity(project.repositoryPath) === registrationIdentity
+      );
+      if (existing) {
+        if (existing.archivedAt) {
+          await this.repo.updateProject(existing.id, {
+            archivedAt: null,
+            defaultBranch: existing.defaultBranch || registration.baseBranch,
+          });
+        }
+        return;
+      }
+      await this.createProject({
+        name: registration.projectName,
+        repositoryPath: registration.repositoryPath,
+        defaultBranch: registration.baseBranch,
+      });
+    });
     return this.repo.listProjects();
   }
 
@@ -88,6 +122,7 @@ export class ProjectService {
       name: trimmedName,
       slug: finalSlug,
       repositoryPath: dto.repositoryPath?.trim() || null,
+      defaultBranch: dto.defaultBranch?.trim() || null,
     });
   }
 

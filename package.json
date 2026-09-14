@@ -2,6 +2,9 @@
   "name": "codex-tasker",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "agenttasker": "./bin/agenttasker.mjs"
+  },
   "scripts": {
     "dev": "next dev --port 5000",
     "build": "next build",
@@ -9,6 +12,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "agenttasker": "node bin/agenttasker.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node db/migrate.mjs"
   },

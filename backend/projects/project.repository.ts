@@ -26,6 +26,10 @@ export class ProjectRepository {
       .orderBy(desc(projects.createdAt));
   }
 
+  async listAllProjects(): Promise<Project[]> {
+    return db.select().from(projects).orderBy(desc(projects.createdAt));
+  }
+
   async getProjectById(id: string): Promise<Project | null> {
     const [project] = await db.select().from(projects).where(eq(projects.id, id));
     return project ?? null;

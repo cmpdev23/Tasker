@@ -611,7 +611,7 @@ explicit synchronization design defines otherwise.
 
 ## 16. Project discovery
 
-When a user selects a repository, AgentTasker should check for:
+When a user selects a repository, AgentTasker checks for:
 
 ``` text
 <repository>/.tasker/
@@ -641,13 +641,20 @@ No AgentTasker configuration detected
 → create sequences/
 ```
 
+The same registration can now start from the repository with `agenttasker init`.
+The CLI writes a machine-local registration request outside the repository; the
+application imports it into SQLite when projects are next loaded. It never edits
+SQLite directly. See [Initialisation avec la CLI](cli-onboarding.md).
+
 This makes repositories portable between AgentTasker installations.
 
 ------------------------------------------------------------------------
 
 ## 17. Git behavior for `.tasker/`
 
-`.tasker/` is intended to be committed to Git.
+`.tasker/` is intended to be committed to Git. The generated Run log directory is
+the narrow exception: `/.tasker/logs/` is ignored because exported logs are local
+operational artifacts.
 
 It should **not** be added to `.gitignore` by default.
 

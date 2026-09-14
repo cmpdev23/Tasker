@@ -4,21 +4,19 @@ import { gitService } from "../git/git.service";
 import { projectService } from "../projects/project.service";
 import { ValidationError, ConflictError } from "../errors";
 import {
-  DEFAULT_MAIN_CODEX_CONFIG,
-  serializeMainCodexConfig,
-} from "./agents.service";
-import {
   parseProjectExecutionSettings,
-  serializeDefaultExecutionSection,
   updateProjectExecutionToml,
 } from "./project-execution";
 import type { ProjectExecutionSettings } from "../../src/types/project-execution";
 import {
   parseProjectGitSettings,
-  serializeDefaultGitSettings,
   updateProjectGitToml,
 } from "./project-git";
 import type { ProjectGitSettings } from "../../src/types/project-git";
+import {
+  PROJECT_INSTRUCTIONS_TEMPLATE,
+  initializeAgentTaskerRepository,
+} from "../../shared/agenttasker-repository.mjs";
 
 export interface InitTaskerOptions {
   repoPath: string;
@@ -26,19 +24,7 @@ export interface InitTaskerOptions {
   baseBranch: string;
 }
 
-export const DEFAULT_INSTRUCTIONS = `# Instructions du projet
-
-Tu travailles sur ce projet en tant qu'agent de développement.
-
-## Instructions générales
-
-- Lis et comprends le projet avant d'effectuer des modifications.
-- Respecte l'architecture et les conventions existantes.
-- Réutilise les composants et les fonctionnalités existantes lorsque possible.
-- Évite les modifications qui ne sont pas nécessaires à la tâche demandée.
-- Garde les changements simples, ciblés et maintenables.
-- Vérifie ton travail avant de terminer.
-`;
+export const DEFAULT_INSTRUCTIONS = PROJECT_INSTRUCTIONS_TEMPLATE;
 
 export class TaskerService {
   async initTasker(options: InitTaskerOptions): Promise<void> {
@@ -70,35 +56,12 @@ export class TaskerService {
       throw new ConflictError("Tasker is already initialized in this repository.");
     }
 
-    // Create .tasker directory
-    fs.mkdirSync(taskerDir, { recursive: false });
-
-    // Create versioned configuration roots for agents, autonomous Tasks, and Sequences.
-    fs.mkdirSync(path.join(taskerDir, "agents"), { recursive: false });
-    fs.mkdirSync(path.join(taskerDir, "tasks"), { recursive: false });
-    fs.mkdirSync(path.join(taskerDir, "sequences"), { recursive: false });
-
-    // Create .tasker/project.toml
-    const projectTomlContent = `version = 1
-name = "${projectName.trim()}"
-
-[git]
-base_branch = "${baseBranch.trim()}"
-${serializeDefaultGitSettings()}
-
-${serializeDefaultExecutionSection()}
-`;
-    fs.writeFileSync(path.join(taskerDir, "project.toml"), projectTomlContent, "utf-8");
-
-    // Create .tasker/instructions.md
-    fs.writeFileSync(path.join(taskerDir, "instructions.md"), DEFAULT_INSTRUCTIONS, "utf-8");
-
-    // Create the versioned Codex defaults used by future project Tasks.
-    fs.writeFileSync(
-      path.join(taskerDir, "agents", "main.toml"),
-      serializeMainCodexConfig(DEFAULT_MAIN_CODEX_CONFIG),
-      "utf-8"
-    );
+    initializeAgentTaskerRepository({
+      repositoryPath: normalizedPath,
+      projectName: projectName.trim(),
+      baseBranch: baseBranch.trim(),
+      allowExisting: false,
+    });
   }
 
   async getProjectInstructions(projectId: string): Promise<{ instructions: string; filePath: string }> {
