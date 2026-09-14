@@ -1,9 +1,9 @@
-import { mergeProps } from "@base-ui/react/merge-props"
-import { useRender } from "@base-ui/react/use-render"
-import { cva, type VariantProps } from "class-variance-authority"
-import Image from "next/image"
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import { cva, type VariantProps } from "class-variance-authority";
+import Image from "next/image";
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
   [
@@ -38,20 +38,18 @@ const badgeVariants = cva(
         dot: "gap-1 border-[#090909] bg-[#f4f4f5] text-[#171717]",
         "dot-dark": "gap-1 border-[#18181b] bg-[#0c0a09] text-white",
         "dot-outline":
-          "gap-1 border-[#18181b] bg-background text-[#18181b] dark:text-white",
+          "gap-1 border-[#18181b] bg-background/60 text-[#18181b] dark:text-white",
       },
     },
     defaultVariants: {
       tone: "default",
       variant: "dot-outline",
     },
-  }
-)
+  },
+);
 
-type BadgeTone = NonNullable<VariantProps<typeof badgeVariants>["tone"]>
-type BadgeVariant = NonNullable<
-  VariantProps<typeof badgeVariants>["variant"]
->
+type BadgeTone = NonNullable<VariantProps<typeof badgeVariants>["tone"]>;
+type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>["variant"]>;
 
 const DOT_ASSETS: Record<BadgeTone, string> = {
   default: "/assets/badges/dot-neutral.svg",
@@ -71,11 +69,11 @@ const DOT_ASSETS: Record<BadgeTone, string> = {
   cyan: "/assets/badges/dot-cyan.svg",
   orange: "/assets/badges/dot-warning.svg",
   amber: "/assets/badges/dot-warning.svg",
-}
+};
 
 interface BadgeProps extends useRender.ComponentProps<"span"> {
-  tone?: BadgeTone
-  variant?: BadgeVariant
+  tone?: BadgeTone;
+  variant?: BadgeVariant;
 }
 
 function Badge({
@@ -86,7 +84,7 @@ function Badge({
   children,
   ...props
 }: BadgeProps) {
-  const hasDot = variant !== "default"
+  const hasDot = variant !== "default";
   const defaultProps = {
     "data-slot": "badge",
     className: cn(badgeVariants({ tone, variant, className })),
@@ -106,13 +104,13 @@ function Badge({
         {children}
       </>
     ),
-  }
+  };
 
   return useRender({
     defaultTagName: "span",
     render,
     props: mergeProps<"span">(defaultProps, props),
-  })
+  });
 }
 
 export {
@@ -121,4 +119,4 @@ export {
   type BadgeProps,
   type BadgeTone,
   type BadgeVariant,
-}
+};
