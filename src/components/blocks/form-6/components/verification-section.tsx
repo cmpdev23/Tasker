@@ -79,13 +79,13 @@ export function PanelHeading({
   title,
   description,
   badge,
-  badgeIcon,
-  badgeVariant = "success-light",
+  badgeTone = "success",
+  badgeVariant = "dot-outline",
 }: {
   title: string
   description?: string
   badge?: string
-  badgeIcon?: ReactNode
+  badgeTone?: BadgeProps["tone"]
   badgeVariant?: BadgeProps["variant"]
 }) {
   return (
@@ -100,8 +100,11 @@ export function PanelHeading({
           ) : null}
         </div>
         {badge ? (
-          <Badge variant={badgeVariant} className="self-start sm:self-center">
-            {badgeIcon}
+          <Badge
+            tone={badgeTone}
+            variant={badgeVariant}
+            className="self-start sm:self-center"
+          >
             {badge}
           </Badge>
         ) : null}

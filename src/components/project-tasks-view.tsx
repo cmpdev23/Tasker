@@ -624,7 +624,7 @@ function TasksView({
                                 {task.id}
                               </code>
                               {!task.enabled && (
-                                <Badge className="mt-1" variant="secondary">
+                                <Badge className="mt-1" tone="secondary">
                                   Désactivée
                                 </Badge>
                               )}
@@ -671,7 +671,7 @@ function TasksView({
                             <td className="min-w-72 px-4 py-2.5">
                               <ButtonGroup className="ml-auto !w-72 shrink-0">
                                 <ButtonGroupText
-                                  className="h-8 min-w-0 flex-1 gap-2 border-border bg-muted/30 px-2.5 text-sm"
+                                  className="h-8 min-w-0 flex-1 gap-2 border-border bg-muted/30 px-2.5 text-[0.8125rem]"
                                   title={`Base branch : ${baseBranch}`}
                                 >
                                   <GitBranchIcon className="size-4" />
@@ -680,7 +680,7 @@ function TasksView({
                                   </span>
                                 </ButtonGroupText>
                                 <ButtonGroupText
-                                  className="h-8 w-26 shrink-0 justify-center gap-2 border-border bg-background/15 px-2.5 text-sm"
+                                  className="h-8 w-26 shrink-0 justify-center gap-2 border-border bg-background/15 px-2.5 text-[0.8125rem]"
                                   title={state.title}
                                 >
                                   <span

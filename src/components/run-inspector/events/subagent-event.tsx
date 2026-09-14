@@ -20,7 +20,11 @@ export function SubagentEvent({ activity, last }: { activity: SubagentActivity; 
       {(activity.agents.length > 0 || activity.threadIds.length > 0) && (
         <div className="mt-2 flex flex-wrap gap-2">
           {(activity.agents.length ? activity.agents : activity.threadIds.map((id) => ({ id, status: "started" }))).map((agent) => (
-            <Badge key={agent.id} variant={/error|interrupt|not_found/i.test(agent.status) ? "destructive-light" : /running|pending|started/i.test(agent.status) ? "info-light" : "secondary"} size="sm" radius="full">
+            <Badge
+              key={agent.id}
+              tone={/error|interrupt|not_found/i.test(agent.status) ? "destructive" : /running|pending|started/i.test(agent.status) ? "info" : "secondary"}
+              variant="dot-outline"
+            >
               {shortId(agent.id)} · {agent.status.replaceAll("_", " ")}
             </Badge>
           ))}

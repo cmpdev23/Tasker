@@ -1,20 +1,20 @@
-import { Loader2Icon } from "lucide-react";
 import { Badge } from "@/components/reui/badge";
 import { isActiveRun } from "@/components/task-ui-utils";
 
 export function RunStatusBadge({ status }: { status: string }) {
-  const variant = status === "SUCCESS"
-    ? "success-light"
+  const tone = status === "SUCCESS"
+    ? "success"
     : status === "FAILED"
-      ? "destructive-light"
+      ? "destructive"
       : isActiveRun(status)
-        ? "info-light"
+        ? "info"
         : "secondary";
+  const normalizedStatus = status.toLowerCase().replaceAll("_", " ");
+  const label = normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1);
+
   return (
-    <Badge variant={variant} radius="full">
-      {isActiveRun(status) && <Loader2Icon className="size-3 animate-spin" />}
-      {status}
+    <Badge tone={tone} variant="dot-outline">
+      {label}
     </Badge>
   );
 }
-

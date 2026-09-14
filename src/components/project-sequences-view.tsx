@@ -257,7 +257,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                       disabled={selectedHasActiveRun} onClick={() => setStepEditor(step)}>
                       <span className="block break-words text-sm font-medium">{step.name}</span>
                       <code className="mt-1 block text-xs text-muted-foreground">{step.id}</code>
-                      <Badge className="mt-2" variant={step.expectChanges ? "secondary" : "outline"}>{step.expectChanges ? "Diff requis" : "Analyse permise"}</Badge>
+                      <Badge className="mt-2" tone={step.expectChanges ? "secondary" : "outline"}>{step.expectChanges ? "Diff requis" : "Analyse permise"}</Badge>
                     </button>
                     <div className="flex shrink-0 gap-1">
                       <Button size="icon-sm" variant="ghost" disabled={selectedHasActiveRun || !!mutating || index === 0}

@@ -18,7 +18,6 @@ import {
   Loader2Icon,
   AlertCircleIcon,
   SettingsIcon,
-  CheckCircle2Icon,
   RefreshCwIcon,
 } from "lucide-react";
 
@@ -296,13 +295,12 @@ function InstructionsEditor({
           </div>
           <div className="flex items-center gap-2">
             {isDirty && (
-              <Badge variant="warning-light" className="text-xs">
+              <Badge tone="warning" variant="dot-outline">
                 Modifications non enregistrées
               </Badge>
             )}
             {lastSavedAt && !isDirty && (
-              <Badge variant="success-light" className="text-xs gap-1">
-                <CheckCircle2Icon className="size-3" />
+              <Badge tone="success" variant="dot-outline">
                 Enregistré
               </Badge>
             )}

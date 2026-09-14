@@ -1,95 +1,111 @@
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
+import Image from "next/image"
 
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
   [
-    "relative inline-flex shrink-0 items-center justify-center w-fit border border-transparent font-medium whitespace-nowrap outline-none transition-shadow",
+    "relative inline-flex h-5 min-w-5 w-fit shrink-0 items-center justify-center overflow-hidden whitespace-nowrap rounded-[26px] border border-solid px-2 py-0.5 text-xs font-medium leading-4 normal-case shadow-[0_1px_1px_0_rgba(63,61,61,0.2)] outline-none",
     "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50",
     "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*=size-])]:size-3",
   ],
   {
     variants: {
+      tone: {
+        default: "border-[#090909] bg-[#f4f4f5] text-black",
+        secondary: "border-[#090909] bg-[#a1a1aa] text-black",
+        outline:
+          "border-[#18181b] bg-transparent text-[#18181b] dark:border-[#f4f4f5] dark:text-[#f4f4f5]",
+        neutral: "border-[#090909] bg-[#bfdbfe] text-[#171717]",
+        info: "border-[#090909] bg-[#a7f3d0] text-[#171717]",
+        success: "border-[#090909] bg-[#bef264] text-[#171717]",
+        warning: "border-[#090909] bg-[#fde047] text-[#171717]",
+        destructive: "border-[#090909] bg-[#f87171] text-[#171717]",
+        rose: "border-[#090909] bg-[#ffe4e6] text-[#171717]",
+        fuchsia: "border-[#090909] bg-[#f5d0fe] text-[#171717]",
+        purple: "border-[#090909] bg-[#d8b4fe] text-[#171717]",
+        violet: "border-[#090909] bg-[#c4b5fd] text-[#171717]",
+        indigo: "border-[#090909] bg-[#a5b4fc] text-[#171717]",
+        blue: "border-[#090909] bg-[#93c5fd] text-[#171717]",
+        cyan: "border-[#090909] bg-[#a5f3fc] text-[#171717]",
+        orange: "border-[#090909] bg-[#fdba74] text-[#171717]",
+        amber: "border-[#090909] bg-[#fde68a] text-[#171717]",
+      },
       variant: {
-        default: "bg-primary text-primary-foreground",
-        outline: "border-border bg-transparent dark:bg-input/32",
-        secondary: "bg-secondary text-secondary-foreground",
-        info: "bg-info text-white",
-        success: "bg-success text-white",
-        warning: "bg-warning text-white",
-        destructive: "bg-destructive text-white",
-        focus: "bg-focus text-focus-foreground",
-        invert: "bg-invert text-invert-foreground",
-        "primary-light":
-          "border-primary/10 bg-primary/10 text-primary dark:border-primary/25 dark:bg-primary/15 dark:text-primary",
-        "warning-light":
-          "border-warning/15 bg-warning/10 text-warning-foreground dark:border-warning/25 dark:bg-warning/15 dark:text-warning",
-        "success-light":
-          "border-success/15 bg-success/10 text-success-foreground dark:border-success/25 dark:bg-success/15 dark:text-success",
-        "info-light":
-          "border-info/15 bg-info/10 text-info-foreground dark:border-info/25 dark:bg-info/15 dark:text-info",
-        "destructive-light":
-          "border-destructive/15 bg-destructive/10 text-destructive-foreground dark:border-destructive/25 dark:bg-destructive/15 dark:text-destructive",
-        "invert-light":
-          "border-invert/15 bg-invert/10 text-foreground dark:border-invert/45 dark:bg-invert/35 dark:text-invert-foreground",
-        "focus-light":
-          "border-focus/15 bg-focus/10 text-focus-foreground dark:border-focus/25 dark:bg-focus/15 dark:text-focus",
-        "primary-outline":
-          "bg-background border-border text-primary dark:bg-input/30",
-        "warning-outline":
-          "bg-background border-border text-warning-foreground dark:bg-input/30",
-        "success-outline":
-          "bg-background border-border text-success-foreground dark:bg-input/30",
-        "info-outline":
-          "bg-background border-border text-info-foreground dark:bg-input/30",
-        "destructive-outline":
-          "bg-background border-border text-destructive-foreground dark:bg-input/30",
-        "invert-outline":
-          "bg-background border-border text-invert-foreground dark:bg-input/30",
-        "focus-outline":
-          "bg-background border-border text-focus-foreground dark:bg-input/30",
-      },
-      size: {
-        xs: "px-1 py-0.25 text-[0.6rem] leading-none h-4 min-w-4 gap-1",
-        sm: "px-1 py-0.25 text-[0.625rem] leading-none h-4.5 min-w-4.5 gap-1",
-        default: "px-1.25 py-0.5 text-xs h-5 min-w-5 gap-1",
-        lg: "px-1.5 py-0.5 text-xs h-5.5 min-w-5.5 gap-1",
-        xl: "px-2 py-0.75 text-sm h-6 min-w-6 gap-1.5",
-      },
-      /** `default`: active style radius. `full`: pill radius. */
-      radius: {
-        default:
-          "rounded-sm",
-        full: "rounded-full",
+        default: "",
+        dot: "gap-1 border-[#090909] bg-[#f4f4f5] text-[#171717]",
+        "dot-dark": "gap-1 border-[#18181b] bg-[#0c0a09] text-white",
+        "dot-outline":
+          "gap-1 border-[#18181b] bg-background text-[#18181b] dark:text-white",
       },
     },
     defaultVariants: {
-      variant: "default",
-      size: "default",
-      radius: "default",
+      tone: "default",
+      variant: "dot-outline",
     },
   }
 )
 
+type BadgeTone = NonNullable<VariantProps<typeof badgeVariants>["tone"]>
+type BadgeVariant = NonNullable<
+  VariantProps<typeof badgeVariants>["variant"]
+>
+
+const DOT_ASSETS: Record<BadgeTone, string> = {
+  default: "/assets/badges/dot-neutral.svg",
+  secondary: "/assets/badges/dot-neutral.svg",
+  outline: "/assets/badges/dot-neutral.svg",
+  neutral: "/assets/badges/dot-neutral.svg",
+  info: "/assets/badges/dot-info.svg",
+  success: "/assets/badges/dot-success.svg",
+  warning: "/assets/badges/dot-warning.svg",
+  destructive: "/assets/badges/dot-destructive.svg",
+  rose: "/assets/badges/dot-destructive.svg",
+  fuchsia: "/assets/badges/dot-purple.svg",
+  purple: "/assets/badges/dot-purple.svg",
+  violet: "/assets/badges/dot-violet.svg",
+  indigo: "/assets/badges/dot-violet.svg",
+  blue: "/assets/badges/dot-neutral.svg",
+  cyan: "/assets/badges/dot-cyan.svg",
+  orange: "/assets/badges/dot-warning.svg",
+  amber: "/assets/badges/dot-warning.svg",
+}
+
 interface BadgeProps extends useRender.ComponentProps<"span"> {
-  variant?: VariantProps<typeof badgeVariants>["variant"]
-  size?: VariantProps<typeof badgeVariants>["size"]
-  radius?: VariantProps<typeof badgeVariants>["radius"]
+  tone?: BadgeTone
+  variant?: BadgeVariant
 }
 
 function Badge({
   className,
-  variant,
-  size,
-  radius,
+  tone = "default",
+  variant = "dot-outline",
   render,
+  children,
   ...props
 }: BadgeProps) {
+  const hasDot = variant !== "default"
   const defaultProps = {
     "data-slot": "badge",
-    className: cn(badgeVariants({ variant, size, radius, className })),
+    className: cn(badgeVariants({ tone, variant, className })),
+    children: (
+      <>
+        {hasDot ? (
+          <Image
+            src={DOT_ASSETS[tone]}
+            alt=""
+            aria-hidden="true"
+            width={8}
+            height={8}
+            unoptimized
+            className="size-2 shrink-0"
+          />
+        ) : null}
+        {children}
+      </>
+    ),
   }
 
   return useRender({
@@ -99,4 +115,10 @@ function Badge({
   })
 }
 
-export { Badge, badgeVariants, type BadgeProps }
+export {
+  Badge,
+  badgeVariants,
+  type BadgeProps,
+  type BadgeTone,
+  type BadgeVariant,
+}

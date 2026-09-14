@@ -47,7 +47,6 @@ import { toast } from "sonner";
 import {
   AlertCircleIcon,
   BotIcon,
-  CheckCircle2Icon,
   Loader2Icon,
   PencilIcon,
   PlusIcon,
@@ -558,13 +557,12 @@ export function ProjectAgentsView({
           </div>
           <div className="flex items-center gap-2">
             {(mainSettingsDirty || !mainFileExists) && (
-              <Badge variant="warning-light" className="text-xs">
+              <Badge tone="warning" variant="dot-outline">
                 Unsaved changes
               </Badge>
             )}
             {lastSavedAt && !mainSettingsDirty && mainFileExists && (
-              <Badge variant="success-light" className="gap-1 text-xs">
-                <CheckCircle2Icon className="size-3" />
+              <Badge tone="success" variant="dot-outline">
                 Saved
               </Badge>
             )}
@@ -727,7 +725,7 @@ export function ProjectAgentsView({
           <div className="flex min-w-0 flex-col gap-0.5">
             <div className="flex items-center gap-2">
               <FrameTitle>Sous-agents</FrameTitle>
-              <Badge variant="outline" className="text-xs">
+              <Badge tone="outline">
                 {subagents.length}
               </Badge>
             </div>
@@ -887,12 +885,12 @@ export function ProjectAgentsView({
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium">{agent.name}</p>
                         {agent.model && (
-                          <Badge variant="outline" className="font-mono text-[0.7rem]">
+                          <Badge tone="outline" className="font-mono">
                             {agent.model}
                           </Badge>
                         )}
                         {agent.sandbox_mode && (
-                          <Badge variant="outline" className="font-mono text-[0.7rem]">
+                          <Badge tone="outline" className="font-mono">
                             {agent.sandbox_mode}
                           </Badge>
                         )}

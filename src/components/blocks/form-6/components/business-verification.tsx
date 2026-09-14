@@ -28,7 +28,7 @@ import {
   VerificationSection,
   type InfoRowItem,
 } from "./verification-section"
-import { ExternalLinkIcon, HelpCircleIcon, ShieldCheckIcon, EyeIcon, StarIcon, PencilIcon, PlusIcon, ChevronUpIcon, ChevronDownIcon, CircleCheckIcon } from "lucide-react"
+import { ExternalLinkIcon, HelpCircleIcon, PencilIcon, PlusIcon, ChevronUpIcon, ChevronDownIcon, CircleCheckIcon } from "lucide-react"
 
 function getOptionLabel(options: VerificationSelectOption[], value: string) {
   return options.find((option) => option.value === value)?.label ?? value
@@ -117,24 +117,6 @@ function RowValueWithSources({
   )
 }
 
-function VerifiedDomainBadgeIcon() {
-  return (
-    <ShieldCheckIcon aria-hidden="true" />
-  )
-}
-
-function CustomerVisibleBadgeIcon() {
-  return (
-    <EyeIcon aria-hidden="true" />
-  )
-}
-
-function PrimaryBadgeIcon() {
-  return (
-    <StarIcon aria-hidden="true" />
-  )
-}
-
 function BrandLogo({
   label,
   children,
@@ -200,16 +182,16 @@ function ToggleOwnerButton({
   )
 }
 
-function getOwnerStatusBadgeVariant(status: string): BadgeProps["variant"] {
+function getOwnerStatusBadgeTone(status: string): BadgeProps["tone"] {
   if (status === "verified") {
-    return "success-light"
+    return "success"
   }
 
   if (status === "needs-review") {
-    return "destructive-light"
+    return "destructive"
   }
 
-  return "warning-light"
+  return "warning"
 }
 
 function getBusinessRows(profile: VerificationProfile): InfoRowItem[] {
@@ -453,8 +435,7 @@ export function BusinessVerification() {
               title={profile.business.legalName}
               description="Domain confirmed for review."
               badge="Verified domain"
-              badgeIcon={<VerifiedDomainBadgeIcon />}
-              badgeVariant="success-light"
+              badgeTone="success"
             />
             <InfoRows rows={getBusinessRows(profile)} />
           </VerificationSection>
@@ -473,8 +454,7 @@ export function BusinessVerification() {
               title="Customer Support Information"
               description="Receipt and invoice profile."
               badge="Customer visible"
-              badgeIcon={<CustomerVisibleBadgeIcon />}
-              badgeVariant="info-light"
+              badgeTone="info"
             />
             <InfoRows rows={getPublicRows(profile)} />
           </VerificationSection>
@@ -501,8 +481,7 @@ export function BusinessVerification() {
               title={profile.management.representativeName}
               description="Account representative"
               badge="Primary"
-              badgeIcon={<PrimaryBadgeIcon />}
-              badgeVariant="primary-light"
+              badgeTone="violet"
             />
             <InfoRows rows={getRepresentativeRows(profile)} />
 
@@ -533,7 +512,7 @@ export function BusinessVerification() {
                     OWNER_STATUS_OPTIONS,
                     profile.management.ownerStatus
                   )}
-                  badgeVariant={getOwnerStatusBadgeVariant(
+                  badgeTone={getOwnerStatusBadgeTone(
                     profile.management.ownerStatus
                   )}
                 />

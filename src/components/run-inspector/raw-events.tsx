@@ -27,7 +27,12 @@ export function RawEvents({ events }: { events: RunEvent[] }) {
             <li key={event.id} className="border-b border-border/60 pb-3 last:border-0 last:pb-0">
               <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[0.6875rem] text-muted-foreground">
                 <time dateTime={event.timestamp}>{event.timestamp}</time>
-                <Badge variant={/error|stderr/i.test(event.type) ? "destructive-light" : "outline"} size="sm">{event.type}</Badge>
+                <Badge
+                  tone={/error|stderr/i.test(event.type) ? "destructive" : "outline"}
+                  variant="dot-outline"
+                >
+                  {event.type}
+                </Badge>
               </div>
               <pre className="whitespace-pre-wrap break-words font-mono text-[0.6875rem] leading-5">{prettyJson(event.rawPayload ?? event.message)}</pre>
             </li>
@@ -37,4 +42,3 @@ export function RawEvents({ events }: { events: RunEvent[] }) {
     </section>
   );
 }
-

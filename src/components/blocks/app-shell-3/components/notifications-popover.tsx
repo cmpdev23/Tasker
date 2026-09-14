@@ -269,7 +269,7 @@ function NotificationItem({ notification }: { notification: Notification }) {
             )}
           </p>
           {badge && (
-            <Badge variant="outline" size="sm">
+            <Badge tone="outline">
               {badge}
             </Badge>
           )}
@@ -389,7 +389,7 @@ function NotificationsPanel() {
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">Notifications</span>
           {unreadCount > 0 && (
-            <Badge size="xs" className="rounded-full!">
+            <Badge>
               {unreadCount}
             </Badge>
           )}

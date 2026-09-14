@@ -37,8 +37,6 @@ import {
 import {
   FolderOpenIcon,
   GitBranchIcon,
-  CheckCircle2Icon,
-  AlertCircleIcon,
   Loader2Icon,
   GlobeIcon,
   SparklesIcon,
@@ -518,13 +516,11 @@ export function ProjectSettingsForm({
                 </dt>
                 <dd className="text-foreground text-sm flex items-center gap-2">
                   {inspection?.isGitRepo ? (
-                    <Badge variant="success-light" className="gap-1.5">
-                      <CheckCircle2Icon className="size-3.5" />
+                    <Badge tone="success" variant="dot-outline">
                       Repository detected
                     </Badge>
                   ) : inspection?.error ? (
-                    <Badge variant="destructive-light" className="gap-1.5">
-                      <AlertCircleIcon className="size-3.5" />
+                    <Badge tone="destructive" variant="dot-outline">
                       {inspection.error}
                     </Badge>
                   ) : isLoadingInspection ? (
@@ -533,8 +529,7 @@ export function ProjectSettingsForm({
                       Detecting...
                     </span>
                   ) : (
-                    <Badge variant="warning-light" className="gap-1.5">
-                      <AlertCircleIcon className="size-3.5" />
+                    <Badge tone="warning" variant="dot-outline">
                       Not a Git repository
                     </Badge>
                   )}
@@ -722,7 +717,10 @@ export function ProjectSettingsForm({
               <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-center">
                 <dt className="text-sm font-medium text-muted-foreground">GitHub CLI</dt>
                 <dd className="flex min-w-0 items-center gap-2 text-xs">
-                  <Badge variant={gitRuntime?.authenticated ? "success-light" : gitRuntime?.available ? "warning-light" : "destructive-light"}>
+                  <Badge
+                    tone={gitRuntime?.authenticated ? "success" : gitRuntime?.available ? "warning" : "destructive"}
+                    variant="dot-outline"
+                  >
                     {gitRuntime?.authenticated ? "Authenticated" : gitRuntime?.available ? "Authentication required" : "Unavailable"}
                   </Badge>
                   <span className="truncate font-mono text-muted-foreground" title={gitRuntime?.detail || undefined}>
@@ -770,14 +768,13 @@ export function ProjectSettingsForm({
               </dt>
               <dd className="text-foreground text-sm flex items-center gap-2">
                 {inspection?.isTaskerInitialized ? (
-                  <Badge variant="success-light" className="gap-1.5">
-                    <CheckCircle2Icon className="size-3.5" />
-                    Initialized
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="gap-1.5 text-muted-foreground">
-                    Not initialized
-                  </Badge>
+                    <Badge tone="success" variant="dot-outline">
+                      Initialized
+                    </Badge>
+                  ) : (
+                    <Badge tone="outline">
+                      Not initialized
+                    </Badge>
                 )}
               </dd>
             </div>
@@ -946,7 +943,10 @@ export function ProjectSettingsForm({
                     const label = key === "node" ? "Node.js" : executionSettings.packageManager;
                     return (
                       <div key={key} className="flex min-w-0 items-center gap-2">
-                        <Badge variant={status == null ? "outline" : status.available ? "success-light" : "destructive-light"}>
+                        <Badge
+                          tone={status == null ? "outline" : status.available ? "success" : "destructive"}
+                          variant="dot-outline"
+                        >
                           {status == null ? "Not checked" : status.available ? "Available" : "Unavailable"}
                         </Badge>
                         <span className="font-medium">{label}</span>
