@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/components/blocks/app-shell-3/components/app-shell";
+import { DevAgentation } from "@/components/dev/agentation";
 import { ProjectsProvider } from "@/contexts/projects-context";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
@@ -44,6 +45,7 @@ export default function RootLayout({
             <ProjectsProvider>
               <AppShell>{children}</AppShell>
               <Toaster position="bottom-right" richColors />
+              <DevAgentation />
             </ProjectsProvider>
           </TooltipProvider>
         </ThemeProvider>
