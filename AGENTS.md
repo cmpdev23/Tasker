@@ -54,7 +54,7 @@ valeurs codées en dur dans le produit.
 ## Modèle produit cible
 
 - L’application comporte des **Projects** et des réglages globaux.
-- Un Project regroupe `Overview`, `Tasks`, `Sequences`, `Instructions`, `Agents` et `Settings`.
+- Un Project regroupe `Tasks`, `Sequences`, `Instructions`, `Agents` et `Settings`.
 - Les Instructions de projet sont persistantes et s’ajoutent aux instructions propres à une Task. Les références sélectionnées sont des chemins relatifs dans le dépôt, sans duplication ni RAG requis pour le MVP.
 - Une **Task** est une définition réutilisable : instructions, références, surcharges agent, planification, validations et comportement Git.
 - Une **Sequence** est un workflow manuel indépendant qui possède ses propres `SequenceSteps` ordonnées. Une étape n’est jamais une Task et ne référence pas la tab Tasks.
@@ -65,7 +65,7 @@ valeurs codées en dur dans le produit.
 ## Architecture et stack actuelle
 
 - Application Next.js 16 (App Router), TypeScript, React 19 et Tailwind CSS 4.
-- `src/app/page.tsx` et `src/app/[projectSlug]/page.tsx` utilisent l’App Shell ReUI et les vues Project (Overview, Settings, Instructions, Tasks, Sequences, Agents).
+- `src/app/page.tsx` et `src/app/[projectSlug]/page.tsx` utilisent l’App Shell ReUI et les vues Project (Tasks, Sequences, Instructions, Agents, Settings).
 - `src/components/blocks/app-shell-3/` contient l’App Shell et sa navigation latérale persistante.
 - `src/components/ui/` contient les primitives shadcn ; `src/components/reui/` contient les primitives ReUI.
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
@@ -76,6 +76,7 @@ valeurs codées en dur dans le produit.
 - Le Sheet live est un Run Inspector : `src/components/run-inspector/` normalise les événements JSONL Codex, regroupe le cycle des items et rend une timeline humaine avec détails techniques secondaires. Le protocole supporté et ses limites sont documentés dans `docs/codex-run-events.md`.
 - Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée. Ils constituent la transposition UI du timer systemd et du runner unique de la référence Linux.
 - Les Settings d’exécution versionnent dans `.tasker/project.toml` le gestionnaire de paquets, l’installation verrouillée optionnelle, les scripts `package.json` de validation et leurs délais. Le worker les exécute hors du sandbox Codex, dans le worktree, avant le commit.
+- Le skill canonique `.agents/skills/agenttasker-project/` permet à un agent de configurer directement les fichiers `.tasker/` d’un dépôt géré. Il est versionné avec AgentTasker, installable dans les skills locaux d’un autre dépôt et actualisable depuis Git; son workflow de distribution est documenté dans `docs/agenttasker-project-skill.md`.
 - Les commandes d’installation/validation choisissent leur propre mode : la copie d’environnement retire `NODE_ENV`, `NEXT_RUNTIME`, `TURBOPACK` et `__NEXT_*` hérités du serveur AgentTasker. Ne jamais transmettre le mode de `next dev` au build du projet. Le Run Inspector sépare le code de sortie Codex des résultats et sorties de chaque commande, avec compatibilité des anciens Runs; voir `docs/run-build-environment.md`.
 - Le succès exige une préparation réussie lorsqu’activée, une sortie structurée positive, toutes les validations configurées et les contrôles Git. Le worker commit puis applique la publication `[git]` optionnelle du Project : push vérifié et PR GitHub idempotente, brouillon par défaut lorsqu’elle est activée. Chaque Sequence choisit dans `sequence.toml` entre une PR après toute la Sequence et des PR distinctes empilées après chaque étape qui produit un commit. Les URLs de PR et les pushs sont persistés sur le Run et, en mode par étape, sur les `SequenceStepRun`; aucun auto-merge n’est effectué. Les échecs/annulations préservent le worktree. Au redémarrage, le worker vérifie l’arbre de processus enregistré avant de reprendre la queue ; lorsqu’une ancienne terminaison ne peut plus être vérifiée automatiquement, le Sheet exige une confirmation locale explicite avant la reprise. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
 
@@ -101,6 +102,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 - Avant de modifier Sequences, SequenceSteps ou leur exécution, lire obligatoirement `docs/sequence-architecture.md` ainsi que les architectures du runner et des worktrees.
 - Avant de modifier le Run Inspector, sa normalisation ou ses renderers, lire obligatoirement `docs/codex-run-events.md` et confronter tout nouveau type aux sources officielles Codex et à des événements réels.
 - Avant de modifier la persistance ou la configuration `.tasker/`, consulter `docs/tasker-persistence-architecture.md`.
+- Lorsqu’un changement modifie le schéma ou les capacités configurables de `.tasker/`, mettre à jour le skill `.agents/skills/agenttasker-project/`, augmenter sa `VERSION` si le changement est livré et vérifier `docs/agenttasker-project-skill.md`.
 - Préserver les fonctionnalités existantes ; après une modification transversale, vérifier chaque système affecté.
 - Ne jamais lire, afficher ou modifier des fichiers `.env*` contenant des secrets. Utiliser exclusivement `.env.example` comme modèle, avec de fausses valeurs. Ajouter une variable seulement pour un secret ou une valeur réellement dépendante de l’environnement.
 - Ne jamais mettre `REUI_LICENSE_KEY` dans le code, un fichier versionné ou une documentation contenant une valeur. Si l’accès ReUI Premium est en cause, seulement vérifier sa présence, jamais sa valeur.

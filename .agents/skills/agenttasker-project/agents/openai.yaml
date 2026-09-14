@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentTasker Project"
+  short_description: "Configure AgentTasker inside a repository"
+  default_prompt: "Use $agenttasker-project to configure AgentTasker for this repository."
+
+policy:
+  allow_implicit_invocation: true

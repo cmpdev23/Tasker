@@ -15,7 +15,7 @@ interface ProjectViewsProps {
 
 export function ProjectViews({ project: initialProject }: ProjectViewsProps) {
   const [project, setProject] = useState<Project>(initialProject);
-  const [activeTab, setActiveTab] = useState<string>("overview");
+  const [activeTab, setActiveTab] = useState<string>("tasks");
 
   return (
     <div className="flex flex-col gap-6 w-full">
@@ -26,31 +26,20 @@ export function ProjectViews({ project: initialProject }: ProjectViewsProps) {
       >
         <div className="flex justify-center w-full">
           <TabsList className="h-auto flex-wrap">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
-            <TabsTrigger value="instructions">Instructions</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
             <TabsTrigger value="sequences">Sequences</TabsTrigger>
+            <TabsTrigger value="instructions">Instructions</TabsTrigger>
             <TabsTrigger value="agents">Agents</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="overview">
-          <div className="bg-muted/30 min-h-[260px] p-6 flex flex-col justify-center items-center text-center">
-            <h2 className="text-lg font-medium">{project.name}</h2>
-            <p className="text-sm text-muted-foreground max-w-md mt-1">
-              Projet AgentTasker configuré et persisté dans SQLite.
-            </p>
-          </div>
+        <TabsContent value="tasks" className="w-full">
+          <ProjectTasksView project={project} onNavigateToSettings={() => setActiveTab("settings")} />
         </TabsContent>
 
-        <TabsContent value="settings" className="w-full">
-          <div className="flex justify-center w-full">
-            <ProjectSettingsForm
-              project={project}
-              onProjectUpdate={setProject}
-            />
-          </div>
+        <TabsContent value="sequences" className="w-full">
+          <ProjectSequencesView project={project} onNavigateToSettings={() => setActiveTab("settings")} />
         </TabsContent>
 
         <TabsContent value="instructions" className="w-full">
@@ -62,19 +51,20 @@ export function ProjectViews({ project: initialProject }: ProjectViewsProps) {
           </div>
         </TabsContent>
 
-        <TabsContent value="tasks" className="w-full">
-          <ProjectTasksView project={project} onNavigateToSettings={() => setActiveTab("settings")} />
-        </TabsContent>
-
-        <TabsContent value="sequences" className="w-full">
-          <ProjectSequencesView project={project} onNavigateToSettings={() => setActiveTab("settings")} />
-        </TabsContent>
-
         <TabsContent value="agents" className="w-full">
           <div className="flex justify-center w-full">
             <ProjectAgentsView
               project={project}
               onNavigateToSettings={() => setActiveTab("settings")}
+            />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="settings" className="w-full">
+          <div className="flex justify-center w-full">
+            <ProjectSettingsForm
+              project={project}
+              onProjectUpdate={setProject}
             />
           </div>
         </TabsContent>

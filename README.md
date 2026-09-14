@@ -64,6 +64,12 @@ Quality commands: `npm run typecheck`, `npm run lint`, `npm test`, `npm run buil
 Use a Node version compatible with the installed `better-sqlite3` native binary.
 Production runs with `npm run start -- --hostname 127.0.0.1 --port 5000` after building.
 
+AgentTasker fournit aussi le skill versionné `$agenttasker-project` pour permettre à
+un agent de créer ou modifier correctement les instructions, Tasks, Sequences et
+réglages Codex d’un dépôt géré. Il peut être installé localement dans
+`.agents/skills/`, puis mis à jour depuis Git. Voir le
+[guide du skill AgentTasker](docs/agenttasker-project-skill.md).
+
 Architecture: [Linux automation reference](docs/v1/implantation-v3.md),
 [Task runner](docs/task-runner-architecture.md),
 [Task configuration](docs/task-configuration.md),
