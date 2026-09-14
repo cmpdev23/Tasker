@@ -43,8 +43,8 @@ Options:
   --no-register            Do not register the project in the local app
   --help, -h               Show this help
 
-The desktop distribution exposes this file as the agenttasker command.
-From a source checkout, use: node bin/agenttasker.mjs init <repository>`);
+From an AgentTasker source checkout, run npm link once. Then execute
+agenttasker init from the Git repository you want to configure.`);
 }
 
 function parseArguments(argv) {

@@ -116,7 +116,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 ## Commandes
 
 - `npm run dev` lance l’application sur `http://localhost:5000`.
-- `.\agenttasker.cmd init <repository>` (Windows) ou `node bin/agenttasker.mjs init <repository>` lance l’onboarding CLI depuis le dépôt source; la distribution desktop devra exposer le même fichier comme commande `agenttasker` dans le `PATH`.
+- Après `npm install`, `npm link` dans le clone AgentTasker expose la commande globale locale; `agenttasker init` lancé depuis un dépôt Git initialise ce dépôt. Aucun package AgentTasker n’est téléchargé ou publié sur le registre npm.
 - `npm run lint` exécute ESLint.
 - `npm run build` génère la version de production.
 - `npm run typecheck` vérifie TypeScript ; `npm test` lance les tests filesystem, horaires, SQLite, Git et processus sur des fixtures temporaires. Le Node.js utilisé doit correspondre au binaire natif `better-sqlite3` installé.
@@ -130,7 +130,6 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 3. Ajouter la rétention configurable des logs/branches/worktrees.
 4. Étendre les références et les sous-agents personnalisés sans abstraction multi-provider.
 5. Ajouter, si souhaité, la planification des Sequences sans les coupler aux Tasks.
-6. Intégrer la commande `agenttasker` aux installateurs desktop Windows, macOS et Linux.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

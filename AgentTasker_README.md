@@ -508,17 +508,23 @@ Codex CLI and/or Codex SDK
 GitHub CLI/API when GitHub integration is enabled
 ```
 
-A desirable eventual experience is:
+The source-checkout workflow is:
 
 ```bash
+git clone git@github.com:cmpdev23/Tasker.git
+cd Tasker
+npm install
+npm link
+
+cd /path/to/a/git/repository
 agenttasker init
 ```
 
 The repository onboarding CLI is now implemented without adding AgentTasker to the
 managed project's package dependencies. It initializes the portable configuration,
 installs the bundled project skill, ignores exported logs, and queues local Project
-registration for the application. Desktop packaging still needs to expose the
-bundled CLI on the user's `PATH`.
+registration for the application. `npm link` exposes the clone's bundled CLI on the
+user's `PATH` without publishing AgentTasker to the npm registry.
 
 ## 18. Native Codex integration
 

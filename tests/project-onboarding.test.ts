@@ -17,8 +17,8 @@ function runGit(args: string[]): void {
 }
 
 function runCli(...args: string[]) {
-  return spawnSync(process.execPath, [path.resolve("bin/agenttasker.mjs"), "init", repository, ...args], {
-    cwd: process.cwd(),
+  return spawnSync(process.execPath, [path.resolve("bin/agenttasker.mjs"), "init", ...args], {
+    cwd: repository,
     encoding: "utf8",
     windowsHide: true,
     env: {
@@ -65,6 +65,7 @@ test("CLI initializes, installs, ignores logs and registers a repository idempot
   const first = runCli("--yes", "--name", "Sample CRM");
   assert.equal(first.status, 0, first.stderr);
   assert.match(first.stdout, /Git repository detected/);
+  assert.match(first.stdout, new RegExp(`Repository root: ${repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"));
   assert.match(first.stdout, /Project registration queued/);
 
   for (const relativePath of [

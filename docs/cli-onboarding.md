@@ -23,24 +23,36 @@ demande d’enregistrement que l’application importe à son prochain chargemen
 
 ## Utilisation
 
-Une distribution desktop doit exposer `bin/agenttasker.mjs` dans le `PATH` sous le
-nom `agenttasker`. Depuis le dépôt source AgentTasker, le même parcours peut être
-testé sans installation globale :
+Après avoir cloné AgentTasker, installer ses dépendances et créer le lien global
+local fourni par npm :
 
-```powershell
-C:\chemin\vers\AgentTasker\agenttasker.cmd init C:\Dev\crm
+```bash
+git clone git@github.com:cmpdev23/Tasker.git
+cd Tasker
+npm install
+npm link
 ```
 
-Depuis le dépôt cible, une commande AgentTasker déjà exposée dans le `PATH` se
-résume à `agenttasker init`. L’appel portable direct
-`node C:\chemin\vers\AgentTasker\bin\agenttasker.mjs init C:\Dev\crm` produit le
-même résultat.
+`npm link` ne publie rien et ne télécharge pas AgentTasker depuis le registre npm.
+Il expose simplement le binaire déclaré dans le clone local sous le nom
+`agenttasker`. Comme il s’agit d’un lien, les mises à jour ultérieures du clone
+sont immédiatement utilisées par la commande.
+
+Depuis le dépôt Git à configurer :
+
+```bash
+cd /chemin/vers/crm
+agenttasker init
+```
+
+Le répertoire courant est la cible par défaut. Un chemin explicite demeure accepté
+pour les scripts et les cas avancés : `agenttasker init /chemin/vers/crm`.
 
 Le mode interactif demande le nom, la branche de base, l’installation du skill et
 une confirmation finale. Pour une automatisation sans prompt :
 
 ```powershell
-node bin/agenttasker.mjs init C:\Dev\crm --yes --name "CRM"
+agenttasker init --yes --name "CRM"
 ```
 
 Options principales :

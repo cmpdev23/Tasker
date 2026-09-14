@@ -41,10 +41,15 @@ universelles d'AgentTasker. En revanche, son contrat d'exécution est la base
 
 ## Running the current V1
 
-Install dependencies with `npm install`, then run `npm run dev` and open
-[localhost:5000](http://localhost:5000). Use a persistent local Node.js server,
-Git with a configured commit identity, and an authenticated Codex CLI.
-SQLite migrations run automatically. See `.env.example` for optional local paths.
+Install dependencies with `npm install`, expose the local CLI once with `npm link`,
+then run `npm run dev` and open [localhost:5000](http://localhost:5000). Use a
+persistent local Node.js server, Git with a configured commit identity, and an
+authenticated Codex CLI. SQLite migrations run automatically. See `.env.example`
+for optional local paths.
+
+After linking, open any Git repository and run `agenttasker init`. The current
+repository is initialized and queued for registration in the local application;
+AgentTasker is not added to that repository's package dependencies.
 
 Register a repository, initialize Tasker in Settings, select its remote base branch,
 configure dependency installation and package validation scripts in Settings,
