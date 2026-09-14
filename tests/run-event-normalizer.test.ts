@@ -74,11 +74,13 @@ test("execution snapshot exposes runner-owned preparation and validation setting
       validationScripts: ["lint", "build"],
       validationTimeoutMinutes: 20,
     },
+    sequence: { pullRequestStrategy: "after_each_step" },
   }));
   assert.equal(config.packageManager, "npm");
   assert.equal(config.installDependencies, true);
   assert.deepEqual(config.validationScripts, ["lint", "build"]);
   assert.equal(config.timeoutMs, 14_400_000);
+  assert.equal(config.sequencePullRequestStrategy, "after_each_step");
 });
 
 test("only failed Runs expose the rerun action", () => {

@@ -7,6 +7,7 @@ import { ProjectSettingsForm } from "@/components/project-settings-form";
 import { ProjectInstructionsView } from "@/components/project-instructions-view";
 import { ProjectAgentsView } from "@/components/project-agents-view";
 import { ProjectTasksView } from "@/components/project-tasks-view";
+import { ProjectSequencesView } from "@/components/project-sequences-view";
 
 interface ProjectViewsProps {
   project: Project;
@@ -24,11 +25,12 @@ export function ProjectViews({ project: initialProject }: ProjectViewsProps) {
         className="flex flex-col gap-6 w-full"
       >
         <div className="flex justify-center w-full">
-          <TabsList>
+          <TabsList className="h-auto flex-wrap">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
             <TabsTrigger value="instructions">Instructions</TabsTrigger>
             <TabsTrigger value="tasks">Tasks</TabsTrigger>
+            <TabsTrigger value="sequences">Sequences</TabsTrigger>
             <TabsTrigger value="agents">Agents</TabsTrigger>
           </TabsList>
         </div>
@@ -62,6 +64,10 @@ export function ProjectViews({ project: initialProject }: ProjectViewsProps) {
 
         <TabsContent value="tasks" className="w-full">
           <ProjectTasksView project={project} onNavigateToSettings={() => setActiveTab("settings")} />
+        </TabsContent>
+
+        <TabsContent value="sequences" className="w-full">
+          <ProjectSequencesView project={project} onNavigateToSettings={() => setActiveTab("settings")} />
         </TabsContent>
 
         <TabsContent value="agents" className="w-full">

@@ -25,6 +25,11 @@ export interface ResolvedExecutionConfig {
   installTimeoutMinutes: number | null;
   validationScripts: string[] | null;
   validationTimeoutMinutes: number | null;
+  gitRemote: string | null;
+  push: boolean | null;
+  createPullRequest: boolean | null;
+  pullRequestDraft: boolean | null;
+  sequencePullRequestStrategy: string | null;
 }
 
 export function resolvedExecutionConfig(value: string | null): ResolvedExecutionConfig {
@@ -34,6 +39,8 @@ export function resolvedExecutionConfig(value: string | null): ResolvedExecution
   const codex = record(root?.codex);
   const workspace = record(codex?.sandbox_workspace_write);
   const execution = record(root?.execution);
+  const git = record(root?.git);
+  const sequence = record(root?.sequence);
   const validationScripts = Array.isArray(execution?.validationScripts) &&
     execution.validationScripts.every((script) => typeof script === "string")
     ? execution.validationScripts as string[]
@@ -53,6 +60,11 @@ export function resolvedExecutionConfig(value: string | null): ResolvedExecution
     installTimeoutMinutes: typeof execution?.installTimeoutMinutes === "number" ? execution.installTimeoutMinutes : null,
     validationScripts,
     validationTimeoutMinutes: typeof execution?.validationTimeoutMinutes === "number" ? execution.validationTimeoutMinutes : null,
+    gitRemote: stringValue(git?.remote),
+    push: typeof git?.push === "boolean" ? git.push : null,
+    createPullRequest: typeof git?.createPullRequest === "boolean" ? git.createPullRequest : null,
+    pullRequestDraft: typeof git?.pullRequestDraft === "boolean" ? git.pullRequestDraft : null,
+    sequencePullRequestStrategy: stringValue(sequence?.pullRequestStrategy),
   };
 }
 
@@ -97,11 +109,21 @@ export function runExecutionRows(run: Run, config = resolvedExecutionConfig(run.
     ["Délai du Run", config.timeoutMs == null ? "Non renseigné" : `${Math.round(config.timeoutMs / 60_000)} min`],
     ["Délai d’installation", config.installTimeoutMinutes == null ? "Non renseigné" : `${config.installTimeoutMinutes} min`],
     ["Délai par validation", config.validationTimeoutMinutes == null ? "Non renseigné" : `${config.validationTimeoutMinutes} min`],
+    ["Remote de publication", config.gitRemote ?? run.baseRemote ?? "Non renseigné"],
+    ["Push configuré", config.push === true ? "Activé" : config.push === false ? "Désactivé" : "Non renseigné"],
+    ["PR configurée", config.createPullRequest === true
+      ? (config.pullRequestDraft === false ? "Activée, prête pour révision" : "Activée en brouillon")
+      : config.createPullRequest === false ? "Désactivée" : "Non renseignée"],
+    ["Stratégie PR de Sequence", run.kind === "SEQUENCE"
+      ? config.sequencePullRequestStrategy === "after_each_step" ? "Une PR empilée par étape avec commit" : "Une PR après toute la Sequence"
+      : "Sans objet"],
     ["Base", [run.baseRemote, run.baseBranch].filter(Boolean).join("/") || "Non renseignée"],
     ["Commit de base", run.baseCommit || "Non renseigné"],
     ["Branche du Run", run.runBranch || "Non renseignée"],
     ["Worktree", run.worktreePath || "Non renseigné"],
     ["Code de sortie Codex", run.exitCode == null ? "Non renseigné" : String(run.exitCode)],
     ["Commit produit", run.commitHash || "Aucun"],
+    ["Publication", run.pushedAt ? `Poussée le ${run.pushedAt}` : "Non poussée"],
+    ["Pull request", run.pullRequestUrl || "Aucune"],
   ] as const;
 }

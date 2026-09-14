@@ -197,6 +197,10 @@ name = "My Project"
 
 [git]
 base_branch = "main"
+remote = "origin"
+push = false
+create_pull_request = false
+pull_request_draft = true
 ```
 
 When a new developer clones the repository, AgentTasker detects `.tasker/project.toml` and automatically knows to use `main` as the Base branch for new task worktrees.
@@ -210,3 +214,24 @@ Failed and cancelled Runs preserve their worktree and Run branch by default so t
 The user can explicitly delete a terminal Run from the interface. When no process identity remains, the destructive confirmation can also serve as the required manual termination confirmation, so deletion is available directly from the recovery banner and Run history instead of being hidden behind a separate recovery step. A recorded PID still prevents deletion until automatic verification observes its termination.
 
 When the Run owns preserved Git artifacts, AgentTasker validates the exact Run-derived branch, confirms that the worktree belongs to the repository and configured runtime root, then removes the worktree and branch before deleting the SQLite record. If any Git cleanup step fails, the Run record remains visible so that work is not silently orphaned. Deleting or recovering a Run never creates or restarts a Task.
+
+---
+
+## 9. Verified Remote Publication
+
+Remote publication is runner-owned and disabled by default. When `push` is enabled,
+AgentTasker pushes the unique Run branch only after Codex, configured validations,
+Git diff checks, and commit verification have all succeeded. It then verifies the
+upstream branch resolves to the same commit with zero divergence.
+
+`create_pull_request` requires `push`. For a GitHub remote, AgentTasker uses the
+locally authenticated GitHub CLI, recovers an existing open PR for the Run branch
+when present, and otherwise creates one after the push. `pull_request_draft`
+controls draft state. A Sequence selects either one final Run-branch PR or distinct
+stacked step PRs in its versioned `pull_request_strategy`. Step publication branches
+remain within the Run namespace and point to the exact verified step commits.
+AgentTasker never asks the coding agent to push and never auto-merges.
+
+If publication fails, the Run fails closed and keeps its local worktree and branch.
+A push that completed before a later PR failure is retained in Run metadata and
+events so recovery does not depend on an agent claim.

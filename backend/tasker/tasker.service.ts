@@ -13,6 +13,12 @@ import {
   updateProjectExecutionToml,
 } from "./project-execution";
 import type { ProjectExecutionSettings } from "../../src/types/project-execution";
+import {
+  parseProjectGitSettings,
+  serializeDefaultGitSettings,
+  updateProjectGitToml,
+} from "./project-git";
+import type { ProjectGitSettings } from "../../src/types/project-git";
 
 export interface InitTaskerOptions {
   repoPath: string;
@@ -67,9 +73,10 @@ export class TaskerService {
     // Create .tasker directory
     fs.mkdirSync(taskerDir, { recursive: false });
 
-    // Create .tasker/agents/ and .tasker/tasks/
+    // Create versioned configuration roots for agents, autonomous Tasks, and Sequences.
     fs.mkdirSync(path.join(taskerDir, "agents"), { recursive: false });
     fs.mkdirSync(path.join(taskerDir, "tasks"), { recursive: false });
+    fs.mkdirSync(path.join(taskerDir, "sequences"), { recursive: false });
 
     // Create .tasker/project.toml
     const projectTomlContent = `version = 1
@@ -77,6 +84,7 @@ name = "${projectName.trim()}"
 
 [git]
 base_branch = "${baseBranch.trim()}"
+${serializeDefaultGitSettings()}
 
 ${serializeDefaultExecutionSection()}
 `;
@@ -221,6 +229,37 @@ ${serializeDefaultExecutionSection()}
     }
     return {
       settings: parseProjectExecutionSettings(next),
+      filePath: ".tasker/project.toml",
+    };
+  }
+
+  async getProjectGitSettings(projectId: string): Promise<{
+    settings: ProjectGitSettings;
+    filePath: string;
+  }> {
+    const projectTomlPath = await this.resolveProjectToml(projectId);
+    return {
+      settings: parseProjectGitSettings(fs.readFileSync(projectTomlPath, "utf-8")),
+      filePath: ".tasker/project.toml",
+    };
+  }
+
+  async updateProjectGitSettings(projectId: string, input: unknown): Promise<{
+    settings: ProjectGitSettings;
+    filePath: string;
+  }> {
+    const projectTomlPath = await this.resolveProjectToml(projectId);
+    const current = fs.readFileSync(projectTomlPath, "utf-8");
+    const next = updateProjectGitToml(current, input);
+    const tempPath = `${projectTomlPath}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tempPath, next, { encoding: "utf-8", flag: "wx" });
+      fs.renameSync(tempPath, projectTomlPath);
+    } finally {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    }
+    return {
+      settings: parseProjectGitSettings(next),
       filePath: ".tasker/project.toml",
     };
   }

@@ -18,7 +18,7 @@ http://localhost:<port>
 
 The goal is not merely to put a UI around `codex exec`. AgentTasker
 provides the orchestration layer around the agent: projects, reusable
-instructions, repository-based knowledge, tasks, scheduling, queues,
+instructions, repository-based knowledge, autonomous tasks, sequential workflows, scheduling, queues,
 isolated Git worktrees, live monitoring, deterministic validation, Git
 operations, optional pull requests, and run history.
 
@@ -28,7 +28,7 @@ operations, optional pull requests, and run history.
 
 A user should be able to launch AgentTasker, create a project, select a
 local Git repository, define persistent instructions and references,
-create tasks, run them manually or on a schedule, monitor the agent
+create autonomous tasks and sequential workflows, run them, monitor the agent
 live, validate its work mechanically, and optionally commit, push, and
 open a pull request.
 
@@ -37,6 +37,7 @@ Comparer Ma Prime
 │
 ├── Overview
 ├── Tasks
+├── Sequences
 ├── Instructions
 └── Settings
 ```
@@ -104,19 +105,20 @@ AgentTasker
 └── Global Settings
 ```
 
-Each project contains four primary areas:
+Each project contains dedicated product areas:
 
 ```text
 Project
 │
 ├── Overview
 ├── Tasks
+├── Sequences
 ├── Instructions
 └── Settings
 ```
 
-Scheduling, validation, Git behavior, and run history should primarily
-live inside Tasks rather than becoming unnecessary top-level modules.
+Scheduling, validation, Git behavior, and run history stay close to the definitions
+that own them. Tasks and Sequences are separate top-level product features.
 
 ## 4. Overview
 
@@ -182,7 +184,7 @@ This module contains persistent context shared by tasks.
 ### Project Instructions
 
 Project Instructions are reusable instructions applied to every relevant
-task. They do not replace the coding agent's own system instructions.
+Task and SequenceStep. They do not replace the coding agent's own system instructions.
 
 Conceptually:
 
@@ -221,8 +223,8 @@ references.
 
 ## 7. Tasks
 
-Tasks are the core unit of AgentTasker. A Task defines what should
-happen and under which conditions it should execute.
+Tasks are AgentTasker's autonomous work unit. A Task defines what should
+happen independently and under which conditions it should execute.
 
 ```text
 ┌──────────────────────────┬────────────┬───────────┐
@@ -270,6 +272,34 @@ reported success.
 Per-task configuration may define base branch, worktree usage, commit
 behavior, push behavior, pull-request creation, and whether the PR is
 draft or ready for review. Auto-merge should default to off.
+
+## 7.1 Sequences
+
+Sequences are workflows that own an ordered list of SequenceSteps. They are a
+separate product feature from Tasks: a step does not reference, create, or appear
+as a Task.
+
+```text
+Sequence: Production SEO
+├── 01 Analyze Search Console
+├── 02 Identify an opportunity
+├── 03 Research
+├── 04 Write the article
+├── 05 Review
+└── 06 Final validation
+```
+
+A Sequence Run uses one isolated worktree and branch for its complete lifecycle.
+Each successful step is independently checked and committed before the next step
+starts, so later steps see the durable output of earlier steps. A failed or
+cancelled step stops the workflow and preserves the worktree; unstarted steps are
+never dispatched. Each Sequence can create one pull request after the complete
+workflow or distinct stacked pull requests after every step that produces a commit;
+already-published step pull requests remain available if a later step fails.
+Sequence definitions live under `.tasker/sequences/`, while their Runs and per-step
+operational state live in SQLite. The current implementation supports manual
+Sequence Runs and up to 500 steps. See
+[`docs/sequence-architecture.md`](docs/sequence-architecture.md).
 
 ## 8. Tasks vs Runs
 

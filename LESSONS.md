@@ -31,3 +31,7 @@
 - Pour un menu portaled, appliquer le `z-index` au conteneur de positionnement,
   pas seulement au popup enfant : un enfant ne peut pas sortir du contexte
   d’empilement de son parent et peut sinon passer derrière la sidebar fixe.
+- Ne jamais imposer une stratégie unique de publication aux Sequences. Le choix
+  entre une PR finale et des PR distinctes par étape est une configuration
+  versionnée de la Sequence; les publications d’étapes déjà réussies doivent
+  rester récupérables lorsqu’une étape suivante échoue.

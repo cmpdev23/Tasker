@@ -61,7 +61,7 @@ cmt/
 │   ├── logs/
 │   │   └── <task-id>_<run-id>.txt
 │   │
-│   └── tasks/
+│   ├── tasks/
 │       ├── create-seo-page/
 │       │   ├── task.toml
 │       │   └── instructions.md
@@ -69,6 +69,13 @@ cmt/
 │       └── technical-audit/
 │           ├── task.toml
 │           └── instructions.md
+│   └── sequences/
+│       └── production-seo/
+│           ├── sequence.toml
+│           └── steps/
+│               └── research/
+│                   ├── step.toml
+│                   └── instructions.md
 │
 ├── AGENTS.md
 ├── README.md
@@ -184,10 +191,17 @@ Initial structure:
 ├── agents/
 │   ├── main.toml
 │   └── <subagent-id>.toml
-└── tasks/
+├── tasks/
     └── <task-id>/
         ├── task.toml
         └── instructions.md
+└── sequences/
+│   └── <sequence-id>/
+│       ├── sequence.toml
+│       └── steps/
+│           └── <step-id>/
+│               ├── step.toml
+│               └── instructions.md
 ```
 
 Additional files may be introduced later when justified, for example:
@@ -200,6 +214,10 @@ Additional files may be introduced later when justified, for example:
         ├── instructions.md
         └── output.schema.json
 ```
+
+Le format livré des Sequences est détaillé dans
+[Sequences et exécution séquentielle](sequence-architecture.md). Les SequenceSteps
+sont des définitions propres à leur Sequence et ne référencent jamais les Tasks.
 
 The format should remain understandable without requiring AgentTasker
 itself.
@@ -219,6 +237,10 @@ name = "Comparer Mon Taux"
 
 [git]
 base_branch = "main"
+remote = "origin"
+push = false
+create_pull_request = false
+pull_request_draft = true
 
 [execution]
 default_timeout_minutes = 180
@@ -229,7 +251,17 @@ validation_scripts = ["lint", "build"]
 validation_timeout_minutes = 20
 ```
 
-Ces réglages sont partagés par les Tasks du Project. AgentTasker transforme les
+La publication Git est partagée par les Tasks et Sequences du Project et reste
+désactivée par défaut. Une PR exige le push; le mode brouillon est recommandé et
+l’auto-merge n’existe pas. Les identifiants logiques suivent le dépôt, tandis que
+l’authentification Git/GitHub reste locale et aucun secret n’est écrit dans ce fichier.
+
+Chaque `sequence.toml` ajoute `pull_request_strategy = "after_sequence"` ou
+`"after_each_step"`. Cette stratégie portable choisit entre une PR finale et des PR
+empilées par étape; les URLs, branches publiées et timestamps de chaque exécution
+restent de l'état opérationnel SQLite dans `sequence_step_runs`.
+
+Les réglages d’exécution sont partagés par les Tasks du Project. AgentTasker transforme les
 noms de scripts en commandes déterministes du gestionnaire choisi; il ne stocke
 pas de chemins absolus vers Node ou npm et n’accepte pas de commande shell libre.
 L’installation reste désactivée par défaut et doit être activée explicitement dans
@@ -536,6 +568,8 @@ portable project configuration.
   Project instructions                       ✓ 
   Task definitions                           ✓ 
   Task instructions/prompts                  ✓ 
+  Sequence definitions                      ✓
+  SequenceStep instructions                 ✓
   Repository references                      ✓ 
   Agent defaults                             ✓ 
   Task agent overrides                       ✓ 
@@ -545,6 +579,7 @@ portable project configuration.
   Local repository path                                               ✓
   Run history                                                         ✓
   Run events                                                          ✓
+  SequenceStep Run state                                              ✓
   Queue state                                                         ✓
   Scheduler runtime state                                             ✓
   Process/PID state                                                   ✓
@@ -591,6 +626,7 @@ AgentTasker configuration detected
 → load project configuration
 → register local repository path in SQLite
 → index tasks
+→ index sequences
 ```
 
 ### `.tasker/` does not exist
@@ -602,6 +638,7 @@ No AgentTasker configuration detected
 → create project.toml
 → create instructions.md
 → create tasks/
+→ create sequences/
 ```
 
 This makes repositories portable between AgentTasker installations.

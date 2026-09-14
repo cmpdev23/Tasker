@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Run, RunEvent } from "@db/schema";
+import type { Run, RunEvent, SequenceStepRun } from "@db/schema";
 import type { RunQueueEntry, RunQueueStatus } from "@/types/run-queue";
 import { AlertCircleIcon, Loader2Icon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel"
 import { RunSummary } from "@/components/run-inspector/run-summary";
 import { projectCommandActivities } from "@/components/run-inspector/project-command-events";
 import { ProjectCommands } from "@/components/run-inspector/project-commands";
+import { SequenceProgress } from "@/components/run-inspector/sequence-progress";
 
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
 
@@ -30,6 +31,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
 }) {
   const [run, setRun] = useState(initialRun);
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const [sequenceSteps, setSequenceSteps] = useState<SequenceStepRun[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
@@ -69,10 +71,11 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
     const controller = new AbortController();
     async function poll() {
       try {
-        const data = await taskRequest<{ run: Run; events: RunEvent[]; queue: RunQueueStatus }>(`${runUrl}?after=${cursor}`, { signal: controller.signal });
+        const data = await taskRequest<{ run: Run; events: RunEvent[]; queue: RunQueueStatus; sequenceSteps?: SequenceStepRun[] }>(`${runUrl}?after=${cursor}`, { signal: controller.signal });
         if (stopped) return;
         if (!data?.run || !Array.isArray(data.events)) throw new Error("Réponse du suivi d’exécution invalide.");
         setRun(data.run);
+        if (Array.isArray(data.sequenceSteps)) setSequenceSteps(data.sequenceSteps);
         if (data.queue) setQueue(data.queue);
         if (data.run.cancelRequested) setCancelRequested(true);
         setEvents((current) => {
@@ -160,7 +163,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
     const label = run.status === "QUEUED"
       ? "Retirer définitivement ce Run de la file ?"
       : confirmTermination
-        ? "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée."
+        ? "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucun travail ne sera créé ou relancé."
       : deleteArtifacts
         ? "Supprimer définitivement ce Run, son worktree et sa branche ? Tout travail non intégré sera perdu."
         : "Supprimer définitivement ce Run de l’historique ?";
@@ -182,7 +185,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
 
   async function removeQueueBlocker(target: RunQueueEntry) {
     if (deleting || !window.confirm(
-      "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée.",
+      "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucun travail ne sera créé ou relancé.",
     )) return;
     setDeleting(true);
     setRecoveryError(null);
@@ -262,6 +265,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
             {cancelError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{cancelError}</p>}
             {deleteError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{deleteError}</p>}
             <RunSummary run={run} failedCommand={failedCommand} />
+            {run.kind === "SEQUENCE" && <SequenceProgress steps={sequenceSteps} />}
             <ProjectCommands commands={commands} />
             <ExecutionDetails run={run} />
             <ActivityFeed activities={activities} loading={loading} active={isActiveRun(run.status)} follow={follow} onFollowChange={setFollow} />

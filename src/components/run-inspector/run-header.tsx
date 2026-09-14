@@ -1,5 +1,5 @@
 import type { Run } from "@db/schema";
-import { FileTextIcon, Loader2Icon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { ExternalLinkIcon, FileTextIcon, Loader2Icon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
@@ -49,11 +49,21 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
           {!isActiveRun(run.status) && (changedFiles > 0 || run.commitHash) && (
             <p className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
               {changedFiles > 0 && <span>{changedFiles} fichier{changedFiles > 1 ? "s" : ""} modifié{changedFiles > 1 ? "s" : ""}</span>}
-              {run.commitHash && <span>1 commit créé</span>}
+              {run.commitHash && <span>{run.kind === "SEQUENCE" ? "Commits d’étapes conservés" : "1 commit créé"}</span>}
             </p>
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2 self-start">
+          {run.pullRequestUrl && (
+            <Button
+              variant="outline"
+              size="sm"
+              render={<a href={run.pullRequestUrl} target="_blank" rel="noreferrer" />}
+            >
+              <ExternalLinkIcon data-icon="inline-start" />
+              Ouvrir la PR
+            </Button>
+          )}
           {onSaveLogs && (
             <Button
               variant="outline"

@@ -65,8 +65,14 @@ export function formatRunLog(run: Run, events: RunEvent[]): string {
   lines.push("AGENTTASKER RUN LOG");
   lines.push("=".repeat(80));
   lines.push(`Run ID:           ${run.id}`);
-  lines.push(`Task ID:          ${run.taskId}`);
-  lines.push(`Task Name:        ${run.taskName}`);
+  lines.push(`Run Kind:         ${run.kind}`);
+  if (run.kind === "SEQUENCE") {
+    lines.push(`Sequence ID:      ${run.sequenceId ?? run.taskId}`);
+    lines.push(`Sequence Name:    ${run.taskName}`);
+  } else {
+    lines.push(`Task ID:          ${run.taskId}`);
+    lines.push(`Task Name:        ${run.taskName}`);
+  }
   lines.push(`Status:           ${run.status}`);
   lines.push(`Exit Code:        ${run.exitCode !== null && run.exitCode !== undefined ? run.exitCode : "N/A"}`);
   lines.push(`Termination:      ${run.terminationVerified ? "Verified" : "Unverified"}`);
@@ -86,6 +92,8 @@ export function formatRunLog(run: Run, events: RunEvent[]): string {
   lines.push(`Run Branch:       ${run.runBranch ?? "N/A"}`);
   lines.push(`Worktree Path:    ${run.worktreePath ?? "N/A"}`);
   lines.push(`Commit Hash:      ${run.commitHash ?? "N/A"}`);
+  lines.push(`Pushed At:        ${run.pushedAt ?? "N/A"}`);
+  lines.push(`Pull Request:     ${run.pullRequestUrl ?? "N/A"}`);
   lines.push("");
 
   lines.push("-".repeat(80));
@@ -154,7 +162,8 @@ export async function saveRunLogs(projectId: string, runId: string) {
     fs.mkdirSync(logsDir, { recursive: true });
   }
 
-  const safeTaskId = run.taskId.replace(/[^a-zA-Z0-9_-]/g, "-") || "task";
+  const definitionId = run.sequenceId ?? run.taskId;
+  const safeTaskId = definitionId.replace(/[^a-zA-Z0-9_-]/g, "-") || (run.kind === "SEQUENCE" ? "sequence" : "task");
   const safeRunId = run.id.replace(/[^a-zA-Z0-9_-]/g, "-");
   const filename = `${safeTaskId}_${safeRunId}.txt`;
   const fullPath = path.join(logsDir, filename);

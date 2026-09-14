@@ -22,8 +22,11 @@ export type NewProject = typeof projects.$inferInsert;
 export const runs = sqliteTable("runs", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull().default("TASK"),
   taskId: text("task_id").notNull(),
   taskName: text("task_name").notNull(),
+  sequenceId: text("sequence_id"),
+  currentStepId: text("current_step_id"),
   status: text("status").notNull(),
   scheduledAt: text("scheduled_at"),
   queuedAt: text("queued_at").notNull(),
@@ -40,6 +43,8 @@ export const runs = sqliteTable("runs", {
   error: text("error"),
   result: text("result"),
   commitHash: text("commit_hash"),
+  pushedAt: text("pushed_at"),
+  pullRequestUrl: text("pull_request_url"),
   diff: text("diff"),
   resolvedConfig: text("resolved_config"),
   cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
@@ -56,6 +61,29 @@ export const runEvents = sqliteTable("run_events", {
   rawPayload: text("raw_payload"),
 }, (table) => [index("run_events_cursor").on(table.runId, table.id)]);
 
+export const sequenceStepRuns = sqliteTable("sequence_step_runs", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
+  sequenceId: text("sequence_id").notNull(),
+  stepId: text("step_id").notNull(),
+  stepName: text("step_name").notNull(),
+  position: integer("position").notNull(),
+  status: text("status").notNull(),
+  startedAt: text("started_at"),
+  completedAt: text("completed_at"),
+  exitCode: integer("exit_code"),
+  error: text("error"),
+  result: text("result"),
+  commitHash: text("commit_hash"),
+  publicationBranch: text("publication_branch"),
+  pushedAt: text("pushed_at"),
+  pullRequestUrl: text("pull_request_url"),
+  diff: text("diff"),
+}, (table) => [
+  index("sequence_step_runs_run_position").on(table.runId, table.position),
+  uniqueIndex("sequence_step_runs_identity").on(table.runId, table.stepId),
+]);
+
 export const schedulerState = sqliteTable("scheduler_state", {
   key: text("key").primaryKey(),
   fingerprint: text("fingerprint").notNull(),
@@ -70,3 +98,4 @@ export const runnerLock = sqliteTable("runner_lock", {
 
 export type Run = typeof runs.$inferSelect;
 export type RunEvent = typeof runEvents.$inferSelect;
+export type SequenceStepRun = typeof sequenceStepRuns.$inferSelect;

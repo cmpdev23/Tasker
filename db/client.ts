@@ -1,11 +1,33 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import path from "node:path";
 import fs from "node:fs";
 import * as schema from "./schema";
 
 const DB_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), "agenttasker.db");
+
+function migrateAtomically(sqlite: Database.Database, migrationsFolder: string) {
+  const migrations = readMigrationFiles({ migrationsFolder });
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS __drizzle_migrations (
+    id SERIAL PRIMARY KEY,
+    hash text NOT NULL,
+    created_at numeric
+  )`);
+  // Drizzle's synchronous migrator reads the last migration before acquiring its
+  // deferred transaction. Next build workers can therefore race on a fresh DB.
+  // BEGIN IMMEDIATE serializes that read and every following schema write.
+  sqlite.transaction(() => {
+    const last = sqlite.prepare("SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1")
+      .get() as { created_at?: number } | undefined;
+    for (const migration of migrations) {
+      if (last?.created_at !== undefined && Number(last.created_at) >= migration.folderMillis) continue;
+      for (const statement of migration.sql) sqlite.exec(statement);
+      sqlite.prepare("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)")
+        .run(migration.hash, migration.folderMillis);
+    }
+  }).immediate();
+}
 
 function initDatabase() {
   const dbDir = path.dirname(DB_PATH);
@@ -18,12 +40,12 @@ function initDatabase() {
   sqlite.pragma("busy_timeout = 5000");
   sqlite.pragma("foreign_keys = ON");
 
-  const db = drizzle(sqlite, { schema });
-
   const migrationsFolder = path.join(process.cwd(), "db", "migrations");
   if (fs.existsSync(migrationsFolder)) {
-    migrate(db, { migrationsFolder });
+    migrateAtomically(sqlite, migrationsFolder);
   }
+
+  const db = drizzle(sqlite, { schema });
 
   return { db, sqlite };
 }

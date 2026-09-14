@@ -54,28 +54,30 @@ valeurs codées en dur dans le produit.
 ## Modèle produit cible
 
 - L’application comporte des **Projects** et des réglages globaux.
-- Un Project regroupe `Overview`, `Tasks`, `Instructions` et `Settings`.
+- Un Project regroupe `Overview`, `Tasks`, `Sequences`, `Instructions`, `Agents` et `Settings`.
 - Les Instructions de projet sont persistantes et s’ajoutent aux instructions propres à une Task. Les références sélectionnées sont des chemins relatifs dans le dépôt, sans duplication ni RAG requis pour le MVP.
 - Une **Task** est une définition réutilisable : instructions, références, surcharges agent, planification, validations et comportement Git.
-- Un **Run** est une exécution d’une Task, avec les statuts `QUEUED`, `PREPARING`, `RUNNING`, `VALIDATING`, `SUCCESS`, `FAILED` ou `CANCELLED`.
+- Une **Sequence** est un workflow manuel indépendant qui possède ses propres `SequenceSteps` ordonnées. Une étape n’est jamais une Task et ne référence pas la tab Tasks.
+- Un **Run** est l’unité de queue d’une Task autonome ou d’une Sequence complète, avec les statuts `QUEUED`, `PREPARING`, `RUNNING`, `VALIDATING`, `SUCCESS`, `FAILED` ou `CANCELLED`.
 - Le Scheduler crée les Runs dus ; tous les Runs, y compris `Run now`, passent par la même Queue avant d’être traités par des Workers. Aucun ordonnanceur OS (cron, Task Scheduler, systemd ou launchd) ne doit être utilisé pour chaque Task.
 - Les exécutions longues appartiennent au runner serveur, pas à une requête du navigateur. Le navigateur sert au contrôle et à l’observabilité et peut être fermé sans interrompre un Run.
 
 ## Architecture et stack actuelle
 
 - Application Next.js 16 (App Router), TypeScript, React 19 et Tailwind CSS 4.
-- `src/app/page.tsx` et `src/app/[projectSlug]/page.tsx` utilisent l’App Shell ReUI et les vues Project (Overview, Settings, Instructions, Tasks, Agents).
+- `src/app/page.tsx` et `src/app/[projectSlug]/page.tsx` utilisent l’App Shell ReUI et les vues Project (Overview, Settings, Instructions, Tasks, Sequences, Agents).
 - `src/components/blocks/app-shell-3/` contient l’App Shell et sa navigation latérale persistante.
 - `src/components/ui/` contient les primitives shadcn ; `src/components/reui/` contient les primitives ReUI.
 - `components.json` configure le registre ReUI et lit `REUI_LICENSE_KEY` depuis l’environnement via un en-tête Bearer, sans jamais enregistrer la clé dans le dépôt.
 - SQLite/Drizzle, la gestion des Projects (renommage, archivage local et suppression protégée des Runs actifs), l'initialisation `.tasker/`, les Instructions, les Settings Git/exécution et la tab Agents sont implémentés.
 - La tab Agents édite `.tasker/agents/main.toml` et les sous-agents TOML, avec découverte locale des modèles via `codex app-server` / `model/list`.
 - La tab Tasks fournit le CRUD versionné `.tasker/tasks/`, les plannings manual/once/hourly/daily/weekly, Run now, la réexécution des Runs échoués, un Sheet live et l’historique. Les Runs en file affichent leur position et les blocages globaux; une terminaison non vérifiée apparaît comme pipeline bloqué lorsqu’un Run attend, ou comme récupération requise lorsqu’il n’y en a aucun. Un Run terminal sans PID connu expose directement deux choix : conserver son travail et débloquer la queue, ou confirmer l’arrêt puis supprimer le Run, son worktree et sa branche en une seule action destructive. Aucune de ces actions ne recrée ni ne relance la Task. Réexécuter reste une action séparée qui crée un nouveau Run depuis la configuration actuelle.
+- La tab Sequences fournit le CRUD versionné `.tasker/sequences/`, un éditeur de `SequenceSteps` ordonnées, une stratégie de PR configurable (une PR finale ou des PR empilées par étape), Run Sequence, la progression par étape et l’historique séparé. Un Run de Sequence conserve le worker, le worktree et la branche pendant toutes ses étapes; chaque étape réussie est validée et commitée avant la suivante. Un échec arrête la chaîne et marque les suivantes `SKIPPED`; les PR d'étapes déjà publiées demeurent récupérables. Voir `docs/sequence-architecture.md`.
 - Le Sheet live est un Run Inspector : `src/components/run-inspector/` normalise les événements JSONL Codex, regroupe le cycle des items et rend une timeline humaine avec détails techniques secondaires. Le protocole supporté et ses limites sont documentés dans `docs/codex-run-events.md`.
 - Le scheduler et le worker uniques démarrent côté serveur via `src/instrumentation.ts`. SQLite possède Runs, événements, curseurs et verrou interprocessus ; le worker lance réellement `codex exec` dans un worktree créé depuis la base distante fraîchement fetchée. Ils constituent la transposition UI du timer systemd et du runner unique de la référence Linux.
 - Les Settings d’exécution versionnent dans `.tasker/project.toml` le gestionnaire de paquets, l’installation verrouillée optionnelle, les scripts `package.json` de validation et leurs délais. Le worker les exécute hors du sandbox Codex, dans le worktree, avant le commit.
 - Les commandes d’installation/validation choisissent leur propre mode : la copie d’environnement retire `NODE_ENV`, `NEXT_RUNTIME`, `TURBOPACK` et `__NEXT_*` hérités du serveur AgentTasker. Ne jamais transmettre le mode de `next dev` au build du projet. Le Run Inspector sépare le code de sortie Codex des résultats et sorties de chaque commande, avec compatibilité des anciens Runs; voir `docs/run-build-environment.md`.
-- Le succès exige une préparation réussie lorsqu’activée, une sortie structurée positive, toutes les validations configurées et les contrôles Git ; le worker commit sans push/merge. Les échecs/annulations préservent le worktree. Au redémarrage, le worker vérifie l’arbre de processus enregistré avant de reprendre la queue ; lorsqu’une ancienne terminaison ne peut plus être vérifiée automatiquement, le Sheet exige une confirmation locale explicite avant la reprise. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
+- Le succès exige une préparation réussie lorsqu’activée, une sortie structurée positive, toutes les validations configurées et les contrôles Git. Le worker commit puis applique la publication `[git]` optionnelle du Project : push vérifié et PR GitHub idempotente, brouillon par défaut lorsqu’elle est activée. Chaque Sequence choisit dans `sequence.toml` entre une PR après toute la Sequence et des PR distinctes empilées après chaque étape qui produit un commit. Les URLs de PR et les pushs sont persistés sur le Run et, en mode par étape, sur les `SequenceStepRun`; aucun auto-merge n’est effectué. Les échecs/annulations préservent le worktree. Au redémarrage, le worker vérifie l’arbre de processus enregistré avant de reprendre la queue ; lorsqu’une ancienne terminaison ne peut plus être vérifiée automatiquement, le Sheet exige une confirmation locale explicite avant la reprise. Voir `docs/task-runner-architecture.md` pour les politiques de reprise et de nettoyage.
 
 ## Direction d’implémentation
 
@@ -83,11 +85,11 @@ La direction technique du MVP est TypeScript/Node.js, Next.js/React, shadcn/ui, 
 
 L'intégration d'agent doit être spécifique à Codex et refléter sa configuration native. Ne pas créer d'interface `AgentProvider`, de dropdown de fournisseur ou d'architecture anticipant Claude, Gemini ou d'autres agents.
 
-Les premières entités durables sont `Project`, `Reference`, `Task`, `Run` et `RunEvent`. Les paramètres agent et exécution de projet peuvent être surchargés par Task. Conserver dans un Run les horodatages, configuration résolue, worktree, branche, code de sortie, résultat, erreur, commit et URL de PR lorsque pertinents.
+Les entités durables comprennent `Project`, `Reference`, `Task`, `Sequence`, `SequenceStep`, `Run`, `SequenceStepRun` et `RunEvent`. Les paramètres agent et exécution de projet peuvent être surchargés par Task. Conserver dans un Run les horodatages, configuration résolue, worktree, branche, code de sortie, résultat, erreur, commit et URL de PR lorsque pertinents.
 
 ## Périmètre MVP
 
-Inclure : projets et détection Git locale, instructions et références de dépôt, création/édition de Tasks, exécution manuelle et récurrente, scheduler interne, queue et concurrence configurable, worktrees temporaires, exécution Codex, journaux live, annulation, validations, commit après succès, push/PR brouillon optionnels, historique des Runs, SQLite et récupération de base après échec. Le comportement cible doit conserver les garanties du runner v3 documenté dans `docs/v1/implantation-v3.md`, en les rendant configurables par Project et Task.
+Inclure : projets et détection Git locale, instructions et références de dépôt, création/édition de Tasks, Sequences et SequenceSteps, exécution autonome manuelle/récurrente et exécution séquentielle manuelle, scheduler interne, queue, worktrees temporaires, exécution Codex, journaux live, annulation, validations, commit après succès, push/PR brouillon optionnels, historique des Runs, SQLite et récupération de base après échec. Le comportement cible doit conserver les garanties du runner v3 documenté dans `docs/v1/implantation-v3.md`.
 
 Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-machine, marketplace/plugins, vector DB/RAG, workflow builder visuel, auto-merge par défaut, nombreux fournisseurs d’agents et application mobile.
 
@@ -96,6 +98,7 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 - Avant toute modification de code Next.js, lire la documentation pertinente dans `node_modules/next/dist/docs/`, car Next.js 16 contient des changements incompatibles avec des conventions plus anciennes.
 - Avant de modifier l’exécution Git, les Runs de tâches, la création de branches ou le comportement des worktrees, lire obligatoirement `docs/git-worktree-architecture.md`.
 - Avant de modifier Tasks, Runs, scheduler, Codex runner ou worktrees, lire obligatoirement `docs/task-runner-architecture.md`. Le schéma des tâches est documenté dans `docs/task-configuration.md`.
+- Avant de modifier Sequences, SequenceSteps ou leur exécution, lire obligatoirement `docs/sequence-architecture.md` ainsi que les architectures du runner et des worktrees.
 - Avant de modifier le Run Inspector, sa normalisation ou ses renderers, lire obligatoirement `docs/codex-run-events.md` et confronter tout nouveau type aux sources officielles Codex et à des événements réels.
 - Avant de modifier la persistance ou la configuration `.tasker/`, consulter `docs/tasker-persistence-architecture.md`.
 - Préserver les fonctionnalités existantes ; après une modification transversale, vérifier chaque système affecté.
@@ -113,15 +116,16 @@ Exclure : service cloud AgentTasker, comptes, équipes, orchestration multi-mach
 - `npm run lint` exécute ESLint.
 - `npm run build` génère la version de production.
 - `npm run typecheck` vérifie TypeScript ; `npm test` lance les tests filesystem, horaires, SQLite, Git et processus sur des fixtures temporaires. Le Node.js utilisé doit correspondre au binaire natif `better-sqlite3` installé.
-- Le lanceur de tests impose une base/runtime jetables; les tests SQLite doivent en plus initialiser leur fixture avant tout import backend, y compris transitif.
+- Le lanceur de tests impose une base/runtime jetables et sérialise les fichiers de test afin que les vérifications d'arbres de processus Windows ne se perturbent pas; les tests SQLite doivent en plus initialiser leur fixture avant tout import backend, y compris transitif.
 - Le runner requiert un serveur Node persistant et Codex authentifié. `DATABASE_PATH` configure la base ; `AGENTTASKER_DATA_DIR` peut définir un runtime externe aux dépôts. `.test-artifacts/` contient les résultats locaux ignorés des smoke tests volontaires.
 
 ## Prochaines étapes
 
 1. Valider les chemins POSIX du runner sur macOS/Linux (tests d’intégration actuels sous Windows).
-2. Ajouter, si souhaité, les overrides de validation par Task et le push/PR brouillon contrôlés.
+2. Ajouter, si souhaité, les overrides de validation par Task.
 3. Ajouter la rétention configurable des logs/branches/worktrees.
 4. Étendre les références et les sous-agents personnalisés sans abstraction multi-provider.
+5. Ajouter, si souhaité, la planification des Sequences sans les coupler aux Tasks.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

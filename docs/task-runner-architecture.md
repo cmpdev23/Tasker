@@ -15,8 +15,11 @@ servir de workspace d’exécution.
 
 ## Situation visée
 
-Une chaîne unique et déterministe : Task → Run QUEUED → Worker → fetch de la base
-distante → worktree → Codex → validations → commit → historique. Le serveur reste
+Une chaîne unique et déterministe : définition → Run QUEUED → Worker → fetch de la
+base distante → worktree → Codex → validations → commit → historique. Pour une
+Task, le Run exécute un travail autonome. Pour une Sequence, le même Run exécute
+ses SequenceSteps dans l’ordre et dans un worktree partagé; voir
+[l’architecture des Sequences](sequence-architecture.md). Le serveur reste
 responsable de chaque transition ; le navigateur observe et contrôle.
 
 ## Configuration et état
@@ -26,16 +29,17 @@ responsable de chaque transition ; le navigateur observe et contrôle.
 - `.tasker/tasks/<id>/instructions.md` : instructions propres à la tâche.
 - `.tasker/instructions.md` : instructions de projet.
 - `.tasker/agents/main.toml` : configuration native de Codex.
-- `.tasker/project.toml` : `[git].base_branch`, `[git].remote` optionnel
-  (défaut `origin`) et les réglages `[execution]` de préparation, validation et
-  délais. Les anciens projets sans cette table reçoivent les valeurs sûres par défaut.
-- SQLite : `runs`, `run_events`, `scheduler_state`, `runner_lock`. Les migrations
+- `.tasker/project.toml` : `[git].base_branch`, `[git].remote` (défaut `origin`),
+  `push`, `create_pull_request`, `pull_request_draft` et les réglages `[execution]`
+  de préparation, validation et délais. Les anciens projets restent en publication
+  désactivée tant que l’utilisateur ne l’active pas explicitement dans Settings.
+- SQLite : `runs`, `run_events`, `sequence_step_runs`, `scheduler_state`, `runner_lock`. Les migrations
   Drizzle sont appliquées au démarrage ; leur échec bloque l’ouverture de la base.
 
 La définition et les instructions ne sont pas recopiées en base. Un Run conserve
 le nom historique, les réglages agent et d’exécution résolus, les coordonnées Git,
 les timestamps, le PID du sous-processus actif, le code de sortie, le résultat final,
-le diff et l’erreur. Les instructions et réglages
+le diff, l’horodatage du push, l’URL de PR et l’erreur. Les instructions et réglages
 sont lus au démarrage effectif du worker, pas au clic de mise en file. Les éditer
 pendant l’attente affecte donc les Runs encore en file. Les réglages déjà chargés
 restent stables pour le Run courant. L’historique contient naturellement les sorties
@@ -71,7 +75,11 @@ début facultative pour les récurrences.
 Insertion du Run, événement initial et curseur scheduler partagent une transaction
 SQLite immédiate. Une contrainte unique `(project_id, task_id, scheduled_at)`
 empêche les doublons d’occurrence. La queue FIFO est constituée des Runs `QUEUED`.
-La prise d’un Run est atomique et refuse un second Run actif. La concurrence V1
+La queue contient les Runs autonomes de Tasks et les Runs complets de Sequences.
+`runs.kind` garde leurs historiques séparés dans l’interface. La prise d’un Run est
+atomique et refuse un second Run actif. Une Sequence conserve le worker jusqu’à la
+fin de toutes ses étapes, de sorte qu’aucun autre Run ne s’intercale entre elles.
+La concurrence V1
 est **un seul Codex pour toute l’installation**. Le scheduler continue de travailler
 pendant cette exécution.
 
@@ -79,6 +87,17 @@ pendant cette exécution.
 la même base ne démarre pas un second worker. Un verrou dont le propriétaire existe
 est respecté ; un propriétaire disparu permet une reprise. Deux installations
 utilisant des bases distinctes restent indépendantes.
+
+### Sequences dans la queue
+
+Un Run de Sequence prépare un seul worktree et une seule branche. Chaque étape
+réussie est validée puis commitée avant le démarrage de la suivante; le commit
+devient sa nouvelle base. Les étapes suivantes voient ainsi les fichiers et
+l’historique produits auparavant. Un échec arrête la chaîne, marque les étapes
+restantes `SKIPPED` et préserve les artefacts Git. La Sequence choisit entre une PR
+finale et des branches/PR empilées publiées après chaque étape ayant un commit; dans
+ce second mode, une publication réussie fait partie du succès de l'étape. Les
+Sequences sont manuelles dans la version actuelle et ne sont pas évaluées par le scheduler.
 
 ## Git et worktrees
 
@@ -249,7 +268,27 @@ L’agent ne doit pas créer de commits : un HEAD différent de la base provoque
 un échec contrôlé et une conservation du travail. Le worker stage les changements
 réels, crée `task(<task-id>): run <uuid>`, puis vérifie parent, arbre et propreté.
 L’identité Git doit être configurée sur la machine ou dans le dépôt. Un problème
-de commit conserve les modifications. Aucun push, PR ou merge n’est effectué.
+de commit conserve les modifications.
+
+Après un commit réussi, le worker applique la politique `[git]` résolue pour le Run.
+Si `push = true`, il pousse la branche UUID du Run avec upstream, puis vérifie que
+la référence distante et le commit local sont identiques avec une divergence `0 0`.
+Si `create_pull_request = true`, `push` est obligatoire : le worker valide d’abord
+que GitHub CLI est installé et authentifié pour l’hôte du remote, recherche une PR
+ouverte pour la branche afin de rendre l’opération idempotente, puis appelle
+`gh pr create`. `pull_request_draft = true` ajoute le mode brouillon. Aucun secret
+GitHub n’est stocké dans `.tasker/` ou SQLite; l’authentification locale existante de
+`gh` est utilisée.
+
+Pour une Sequence, `pull_request_strategy = "after_sequence"` publie une seule PR
+après toutes les étapes. `after_each_step` publie une branche dédiée après chaque
+étape ayant créé un commit et ouvre une PR empilée sur la branche de l'étape
+précédente; l'étape suivante ne démarre qu'après ce succès. Une erreur de push, de
+vérification distante ou de création de PR fait échouer l’étape et le Run, conserve
+le worktree et ses commits, et laisse les PR des étapes antérieures récupérables.
+Un push déjà réussi reste tracé même si la création de PR échoue. AgentTasker ne
+merge jamais automatiquement. `expect_changes` décide uniquement si un diff est
+requis pour réussir; il n’active jamais implicitement une publication distante.
 
 ## Annulation, arrêt et récupération
 
@@ -330,7 +369,7 @@ fichier de test, SUCCESS et commit automatique, sans modifier le checkout princi
 `real-run-cancel-smoke.mjs` a ensuite confirmé l’annulation d’un véritable processus
 Codex depuis le Sheet, avec terminaison vérifiée et worktree conservé.
 Le redémarrage en production a conservé la Task et les 61 événements du Run réussi.
-La validation locale actuelle comprend 84 tests réussis, un test de symlink ignoré
+La validation locale actuelle comprend 97 tests réussis, un test de symlink ignoré
 faute de privilèges Windows, ainsi que les contrôles TypeScript et ESLint.
 Une seconde exécution réelle réussie a vérifié le contrôle renforcé des descendants
 après sortie normale de Codex, avec terminaison vérifiée et nettoyage du worktree.

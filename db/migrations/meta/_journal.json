@@ -29,6 +29,27 @@
       "when": 1789134027432,
       "tag": "0003_spooky_galactus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789386385749,
+      "tag": "0004_watery_doctor_faustus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1789389932324,
+      "tag": "0005_bouncy_warhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789393313322,
+      "tag": "0006_steady_cyclops",
+      "breakpoints": true
     }
   ]
 }

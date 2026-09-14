@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { db, sqlite } from "../../db/client";
 import { runs, runEvents, type Run } from "../../db/schema";
-import { NotFoundError } from "../errors";
+import { ConflictError, NotFoundError } from "../errors";
 import type { RunQueueEntry, RunQueueStatus } from "../../src/types/run-queue";
 
 export const ACTIVE_STATUSES = ["QUEUED", "PREPARING", "RUNNING", "VALIDATING"];
@@ -25,9 +25,22 @@ export const runRepository = {
   create(projectId: string, taskId: string, taskName: string, scheduledAt: string | null = null): Run {
     return sqlite.transaction(() => {
       const now = new Date().toISOString();
-      const run = db.insert(runs).values({ id: randomUUID(), projectId, taskId, taskName,
+      const run = db.insert(runs).values({ id: randomUUID(), projectId, kind: "TASK", taskId, taskName,
         status: "QUEUED", scheduledAt, queuedAt: now, createdAt: now }).returning().get();
       this.event(run.id, "status", "Queued");
+      return run;
+    }).immediate();
+  },
+  createSequence(projectId: string, sequenceId: string, sequenceName: string): Run {
+    return sqlite.transaction(() => {
+      const existing = db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, projectId),
+        eq(runs.kind, "SEQUENCE"), eq(runs.sequenceId, sequenceId), inArray(runs.status, ACTIVE_STATUSES))).get();
+      if (existing) throw new ConflictError("Cette Sequence possède déjà un Run actif ou en attente.");
+      const now = new Date().toISOString();
+      const run = db.insert(runs).values({ id: randomUUID(), projectId, kind: "SEQUENCE",
+        taskId: sequenceId, taskName: sequenceName, sequenceId,
+        status: "QUEUED", queuedAt: now, createdAt: now }).returning().get();
+      this.event(run.id, "status", "Sequence queued");
       return run;
     }).immediate();
   },
@@ -38,7 +51,13 @@ export const runRepository = {
   },
   list(projectId: string, taskId?: string, before?: string) {
     return db.select().from(runs).where(and(eq(runs.projectId, projectId),
+      eq(runs.kind, "TASK"),
       taskId ? eq(runs.taskId, taskId) : undefined,
+      before ? lt(runs.createdAt, before) : undefined)).orderBy(desc(runs.createdAt)).limit(200).all();
+  },
+  listSequences(projectId: string, sequenceId?: string, before?: string) {
+    return db.select().from(runs).where(and(eq(runs.projectId, projectId), eq(runs.kind, "SEQUENCE"),
+      sequenceId ? eq(runs.sequenceId, sequenceId) : undefined,
       before ? lt(runs.createdAt, before) : undefined)).orderBy(desc(runs.createdAt)).limit(200).all();
   },
   update(id: string, values: Partial<typeof runs.$inferInsert>) {
@@ -74,7 +93,11 @@ export const runRepository = {
   },
   hasActive(projectId: string, taskId: string) {
     return Boolean(db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, projectId),
-      eq(runs.taskId, taskId), inArray(runs.status, ACTIVE_STATUSES))).get());
+      eq(runs.kind, "TASK"), eq(runs.taskId, taskId), inArray(runs.status, ACTIVE_STATUSES))).get());
+  },
+  hasActiveSequence(projectId: string, sequenceId: string) {
+    return Boolean(db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, projectId),
+      eq(runs.kind, "SEQUENCE"), eq(runs.sequenceId, sequenceId), inArray(runs.status, ACTIVE_STATUSES))).get());
   },
   queueStatus(runId?: string): RunQueueStatus {
     const queued = db.select().from(runs).where(eq(runs.status, "QUEUED"))
@@ -109,7 +132,8 @@ export const runRepository = {
   claim(): Run | undefined {
     return sqlite.transaction(() => {
       if (this.active().length) return undefined;
-      const run = db.select().from(runs).where(eq(runs.status, "QUEUED")).orderBy(asc(runs.queuedAt)).get();
+      const run = db.select().from(runs).where(eq(runs.status, "QUEUED"))
+        .orderBy(asc(runs.queuedAt), asc(runs.createdAt)).get();
       if (!run) return undefined;
       return this.update(run.id, { status: "PREPARING", startedAt: new Date().toISOString() });
     }).immediate();

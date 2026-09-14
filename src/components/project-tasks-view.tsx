@@ -143,7 +143,7 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
     const label = run.status === "QUEUED"
       ? "Retirer définitivement ce Run de la file ?"
       : confirmTermination
-        ? "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée."
+        ? "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucun travail ne sera créé ou relancé."
       : deleteArtifacts
         ? "Supprimer définitivement ce Run, son worktree et sa branche ? Tout travail non intégré sera perdu."
         : "Supprimer définitivement ce Run de l’historique ?";
@@ -171,7 +171,7 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
   async function removeBlockingRun() {
     const blocker = queueStatus?.blocker;
     if (!blocker || !queueStatus.canRecover || removingRun || !window.confirm(
-      "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucune Task ne sera créée ou relancée.",
+      "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucun travail ne sera créé ou relancé.",
     )) return;
     setRemovingRun(blocker.id);
     setPipelineError(null);
@@ -183,7 +183,7 @@ function TasksView({ project, onNavigateToSettings }: { project: Project; onNavi
       if (data.queue) setQueueStatus(data.queue);
       if (selectedRun?.id === blocker.id) setSelectedRun(null);
       setRefresh((value) => value + 1);
-      toast.success("Run bloquant supprimé. Aucune Task n’a été relancée.");
+      toast.success("Run bloquant supprimé. Aucun travail n’a été relancé.");
     } catch (error) {
       setPipelineError(errorMessage(error));
     } finally {

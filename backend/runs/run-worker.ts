@@ -10,6 +10,7 @@ import { taskService } from "../tasks/task.service";
 import { readString, sectionContent } from "../tasks/toml";
 import { agentsService } from "../tasker/agents.service";
 import { parseProjectExecutionSettings } from "../tasker/project-execution";
+import { parseProjectGitSettings } from "../tasker/project-git";
 import { runCodex, CODEX_RUN_OUTPUT_SCHEMA, verifyExitedProcessTree } from "../codex/codex-runner";
 import { prepareRunWorktree, finalizeRunWorktree, inspectRunChanges, cleanupSuccessfulWorktree,
   type RunWorktree } from "../git/run-git.service";
@@ -24,6 +25,8 @@ import {
   runProjectCommand,
   type ProjectCommand,
 } from "./project-command-runner";
+import { executeSequenceRun } from "../sequences/sequence-run-worker";
+import { publishRunWorktree } from "../git/run-publication.service";
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -39,7 +42,12 @@ function readProjectFile(repo: string, relative: string): string {
   return fs.readFileSync(file, "utf8");
 }
 
-export async function executeRun(run: Run, controller = new AbortController(), executeCodex = runCodex) {
+async function executeTaskRun(
+  run: Run,
+  controller = new AbortController(),
+  executeCodex = runCodex,
+  publishWorktree: typeof publishRunWorktree = publishRunWorktree,
+) {
   let worktree: RunWorktree | undefined;
   const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
   const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
@@ -104,9 +112,10 @@ export async function executeRun(run: Run, controller = new AbortController(), e
     const executionSettings = parseProjectExecutionSettings(projectToml);
     assertProjectExecutionRuntime(executionSettings);
     const git = sectionContent(projectToml, "git");
+    const gitSettings = parseProjectGitSettings(projectToml);
     const baseBranch = readString(git, "base_branch");
     if (!baseBranch) throw new Error("Configure a base branch in .tasker/project.toml.");
-    const remote = readString(git, "remote") || "origin";
+    const remote = gitSettings.remote;
     readProjectFile(project.repositoryPath, ".tasker/agents/main.toml");
     const { main } = await agentsService.getAgents(run.projectId);
     const projectInstructions = readProjectFile(project.repositoryPath, ".tasker/instructions.md");
@@ -117,7 +126,8 @@ export async function executeRun(run: Run, controller = new AbortController(), e
       .map((command) => `- ${command.executable} ${command.args.join(" ")}`).join("\n") || "- None configured";
     const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final Run status. Report a truthful result about the requested work and any other blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
     runRepository.update(run.id, { baseRemote: remote, baseBranch,
-      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, timeoutMs, expectChanges: task.expectChanges }) });
+      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, git: gitSettings,
+        timeoutMs, expectChanges: task.expectChanges }) });
     controller.signal.throwIfAborted();
     worktree = await prepareRunWorktree({ repoPath: project.repositoryPath,
       worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"), runId: run.id,
@@ -162,6 +172,21 @@ export async function executeRun(run: Run, controller = new AbortController(), e
     runRepository.update(run.id, { diff: `${gitResult.status}\n${gitResult.diff}`, commitHash: gitResult.commitSha });
     if (!gitResult.success) throw new Error(gitResult.error || "Git validation failed.");
     if (runRepository.get(run.projectId, run.id).cancelRequested) throw new Error("Run cancelled; any completed commit is preserved.");
+    const publication = await publishWorktree(worktree, {
+      settings: gitSettings,
+      expectedHead: gitResult.commitSha,
+      title: `task(${task.id}): ${task.name}`,
+      body: `## AgentTasker Run\n\n- **Task:** ${task.name} (\`${task.id}\`)\n- **Run:** \`${run.id}\`\n- **Base:** \`${remote}/${baseBranch}\` at \`${worktree.baseCommit}\`\n- **Branch:** \`${worktree.branch}\`\n- **Commit:** \`${gitResult.commitSha ?? "none"}\`\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n### Agent summary\n\n${(result.agentResult?.summary ?? result.lastAgentMessage ?? "Run completed successfully.").slice(0, 4_000)}\n\n> Created by AgentTasker. Human review and merge remain required.`,
+      signal: controller.signal,
+      onEvent: (entry) => {
+        event("publication", entry.message, JSON.stringify({ kind: "run-publication", ...entry }));
+        if (entry.stage === "push" && entry.status === "success") {
+          runRepository.update(run.id, { pushedAt: new Date().toISOString() });
+        }
+        if (entry.pullRequestUrl) runRepository.update(run.id, { pullRequestUrl: entry.pullRequestUrl });
+      },
+    });
+    runRepository.update(run.id, { pushedAt: publication.pushedAt, pullRequestUrl: publication.pullRequestUrl });
     const cleanup = await cleanupSuccessfulWorktree(worktree, gitResult).catch(error => ({ removed: false, reason: String(error) }));
     event("cleanup", cleanup.removed ? "Clean worktree removed; run branch and commit retained." : `Worktree preserved: ${cleanup.reason}`);
     const completed = runRepository.completeSuccess(run.projectId, run.id);
@@ -183,6 +208,17 @@ export async function executeRun(run: Run, controller = new AbortController(), e
       completedAt: new Date().toISOString() });
     event("status", `${cancelled ? "Cancelled" : "Failed"}: ${message}. Existing worktree and branch preserved.`);
   } finally { clearInterval(cancellation); }
+}
+
+export async function executeRun(
+  run: Run,
+  controller = new AbortController(),
+  executeCodex = runCodex,
+  publishWorktree: typeof publishRunWorktree = publishRunWorktree,
+) {
+  return run.kind === "SEQUENCE"
+    ? executeSequenceRun(run, controller, executeCodex, publishWorktree)
+    : executeTaskRun(run, controller, executeCodex, publishWorktree);
 }
 
 export function createRunner(options: { debug?: RunDebugLogger } = {}) {
@@ -259,6 +295,11 @@ export function createRunner(options: { debug?: RunDebugLogger } = {}) {
         runRepository.event(interrupted.id, "recovery", terminationVerified
           ? "Interrupted run process tree verified stopped; queue resumed. Worktree preserved for inspection."
           : "Interrupted run recovered; preserved worktree for inspection.");
+        if (interrupted.kind === "SEQUENCE") {
+          const { sequenceRunRepository } = await import("../sequences/sequence-run.repository");
+          sequenceRunRepository.stopRemaining(interrupted.id, interrupted.cancelRequested ? "CANCELLED" : "SKIPPED",
+            "The AgentTasker server stopped before the Sequence completed.");
+        }
         debug("interrupted-run-recovered", {
           runId: interrupted.id,
           projectId: interrupted.projectId,

@@ -30,6 +30,11 @@ import {
   type ProjectExecutionSettings,
 } from "@/types/project-execution";
 import {
+  DEFAULT_PROJECT_GIT_SETTINGS,
+  type GitHubCliRuntimeStatus,
+  type ProjectGitSettings,
+} from "@/types/project-git";
+import {
   FolderOpenIcon,
   GitBranchIcon,
   CheckCircle2Icon,
@@ -38,6 +43,7 @@ import {
   GlobeIcon,
   SparklesIcon,
   TerminalSquareIcon,
+  GitPullRequestDraftIcon,
 } from "lucide-react";
 
 interface GitInspection {
@@ -82,6 +88,10 @@ export function ProjectSettingsForm({
   const [executionRuntime, setExecutionRuntime] = useState<ProjectExecutionRuntimeStatus | null>(null);
   const [isLoadingExecution, setIsLoadingExecution] = useState(Boolean(initialProject.repositoryPath));
   const [isSavingExecution, setIsSavingExecution] = useState(false);
+  const [gitSettings, setGitSettings] = useState<ProjectGitSettings>(DEFAULT_PROJECT_GIT_SETTINGS);
+  const [gitRuntime, setGitRuntime] = useState<GitHubCliRuntimeStatus | null>(null);
+  const [isLoadingGitSettings, setIsLoadingGitSettings] = useState(Boolean(initialProject.repositoryPath));
+  const [isSavingGitSettings, setIsSavingGitSettings] = useState(false);
 
   // Load Git inspection whenever project.repositoryPath is available
   const fetchGitInspection = useCallback((path?: string, signal?: AbortSignal) => {
@@ -137,6 +147,29 @@ export function ProjectSettingsForm({
     void fetchExecutionSettings(controller.signal);
     return () => controller.abort();
   }, [inspection?.isTaskerInitialized, fetchExecutionSettings]);
+
+  const fetchGitSettings = useCallback((signal?: AbortSignal) => {
+    return fetch(`/api/projects/${project.id}/git-integration`, { signal }).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to load Git publication settings.");
+      if (signal?.aborted) return;
+      setGitSettings(data.settings);
+      setGitRuntime(data.runtime);
+    }).catch((error: unknown) => {
+      if (signal?.aborted) return;
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Failed to load Git publication settings.");
+    }).finally(() => {
+      if (!signal?.aborted) setIsLoadingGitSettings(false);
+    });
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!inspection?.isTaskerInitialized) return;
+    const controller = new AbortController();
+    void fetchGitSettings(controller.signal);
+    return () => controller.abort();
+  }, [inspection?.isTaskerInitialized, fetchGitSettings]);
 
   // Handle Browse button
   const handleBrowseFolder = async () => {
@@ -304,6 +337,27 @@ export function ProjectSettingsForm({
       toast.error(error instanceof Error ? error.message : "Failed to save execution settings.");
     } finally {
       setIsSavingExecution(false);
+    }
+  };
+
+  const handleSaveGitSettings = async () => {
+    setIsSavingGitSettings(true);
+    try {
+      const response = await fetch(`/api/projects/${project.id}/git-integration`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: gitSettings }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to save Git publication settings.");
+      setGitSettings(data.settings);
+      setGitRuntime(data.runtime);
+      toast.success("Git publication settings saved in .tasker/project.toml.");
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Failed to save Git publication settings.");
+    } finally {
+      setIsSavingGitSettings(false);
     }
   };
 
@@ -576,7 +630,112 @@ export function ProjectSettingsForm({
         </FramePanel>
       </Frame>
 
-      {/* 4. Tasker Section */}
+      {/* 4. Git publication Section */}
+      <Frame stacked spacing="sm" className="w-full">
+        <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <FrameTitle>Git publication</FrameTitle>
+            <FrameDescription>
+              Push verified Run branches and optionally open GitHub pull requests.
+            </FrameDescription>
+          </div>
+          <Button
+            type="button"
+            onClick={handleSaveGitSettings}
+            disabled={!inspection?.isTaskerInitialized || isLoadingGitSettings || isSavingGitSettings}
+            className="gap-1.5"
+          >
+            {isSavingGitSettings ? <Loader2Icon className="size-4 animate-spin" /> : <GitPullRequestDraftIcon className="size-4" />}
+            Save publication
+          </Button>
+        </FrameHeader>
+
+        <FramePanel className="p-0">
+          {!inspection?.isTaskerInitialized ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              Initialize Tasker before configuring remote publication.
+            </div>
+          ) : isLoadingGitSettings ? (
+            <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
+              <Loader2Icon className="size-4 animate-spin" /> Loading publication settings...
+            </div>
+          ) : (
+            <dl className="flex flex-col">
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-center">
+                <dt className="text-sm font-medium text-muted-foreground">Remote name</dt>
+                <dd className="flex max-w-md flex-col gap-1.5">
+                  <Input
+                    value={gitSettings.remote}
+                    onChange={(event) => setGitSettings((current) => ({ ...current, remote: event.target.value }))}
+                    className="font-mono text-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">The configured remote is used both as the fresh Run base and the push target.</p>
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
+                <dt className="text-sm font-medium text-muted-foreground">Branch publication</dt>
+                <dd className="flex max-w-md flex-col gap-3">
+                  <label className="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-primary"
+                      checked={gitSettings.push}
+                      onChange={(event) => setGitSettings((current) => ({
+                        ...current,
+                        push: event.target.checked,
+                        createPullRequest: event.target.checked ? current.createPullRequest : false,
+                      }))}
+                    />
+                    <span>Push successful Run branches<span className="mt-0.5 block text-xs text-muted-foreground">The runner verifies that every remote publication branch exactly matches its selected Run commit.</span></span>
+                  </label>
+                  <label className="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-primary"
+                      checked={gitSettings.createPullRequest}
+                      onChange={(event) => setGitSettings((current) => ({
+                        ...current,
+                        push: event.target.checked ? true : current.push,
+                        createPullRequest: event.target.checked,
+                      }))}
+                    />
+                    <span>Create a GitHub pull request<span className="mt-0.5 block text-xs text-muted-foreground">Requires GitHub CLI authentication. Each Sequence chooses one final PR or stacked PRs after its committed steps.</span></span>
+                  </label>
+                  <label className="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-primary"
+                      checked={gitSettings.pullRequestDraft}
+                      disabled={!gitSettings.createPullRequest}
+                      onChange={(event) => setGitSettings((current) => ({ ...current, pullRequestDraft: event.target.checked }))}
+                    />
+                    <span>Create as draft<span className="mt-0.5 block text-xs text-muted-foreground">Keeps human review mandatory before merge.</span></span>
+                  </label>
+                </dd>
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-center">
+                <dt className="text-sm font-medium text-muted-foreground">GitHub CLI</dt>
+                <dd className="flex min-w-0 items-center gap-2 text-xs">
+                  <Badge variant={gitRuntime?.authenticated ? "success-light" : gitRuntime?.available ? "warning-light" : "destructive-light"}>
+                    {gitRuntime?.authenticated ? "Authenticated" : gitRuntime?.available ? "Authentication required" : "Unavailable"}
+                  </Badge>
+                  <span className="truncate font-mono text-muted-foreground" title={gitRuntime?.detail || undefined}>
+                    {gitRuntime?.detail || "Save to refresh the preflight check"}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          )}
+        </FramePanel>
+      </Frame>
+
+      {/* 5. Tasker Section */}
       <Frame stacked spacing="sm" className="w-full">
         <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-col gap-0.5">
@@ -646,7 +805,7 @@ export function ProjectSettingsForm({
         </FramePanel>
       </Frame>
 
-      {/* 5. Execution Section */}
+      {/* 6. Execution Section */}
       <Frame stacked spacing="sm" className="w-full">
         <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-col gap-0.5">
