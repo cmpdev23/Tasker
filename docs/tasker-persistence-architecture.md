@@ -568,9 +568,19 @@ Credentials should use an appropriate local mechanism such as:
 -   OS credential storage;
 -   another secure local credential mechanism.
 
-SQLite may store non-secret metadata identifying which local credential
-or integration should be used, but raw secrets should not be part of the
-portable project configuration.
+La V1 fournit un mécanisme local par Project pour les variables nécessaires aux Runs.
+`project_environment_variables` conserve leurs valeurs chiffrées avec AES-256-GCM;
+la clé aléatoire `environment-secrets.key` reste dans le répertoire de données local
+d’AgentTasker, séparée de SQLite et extérieure au dépôt. Le nom du Project et celui de
+la variable font partie des données authentifiées du chiffrement afin d’empêcher le
+déplacement silencieux d’un ciphertext vers une autre entrée.
+
+L’API retourne uniquement les noms et l’état configuré. Une valeur existante peut être
+conservée sans être renvoyée au navigateur, remplacée explicitement, ou supprimée avec
+sa ligne. La suppression d’un Project supprime ses variables par cascade. Une sauvegarde
+récupérable doit inclure la base et la clé locale; le chiffrement protège notamment une
+copie isolée de la base, mais ne remplace pas les permissions du compte utilisateur ni
+un coffre-fort système contre un processus local déjà compromis.
 
 ------------------------------------------------------------------------
 
@@ -592,6 +602,7 @@ portable project configuration.
   Git strategy                               ✓ 
   Local repository path                                               ✓
   Local Python interpreter path                                       ✓
+  Project environment variable names                                 ✓
   Run history                                                         ✓
   Run events                                                          ✓
   SequenceStep Run state                                              ✓
@@ -601,7 +612,7 @@ portable project configuration.
   Temporary worktree paths                                            ✓
   Local UI preferences                                                ✓
   Integration state                                                   ✓
-  Raw credentials/secrets                Never   Secure local mechanism
+  Raw credentials/secrets                Never   Encrypted local mechanism
 
 ------------------------------------------------------------------------
 
@@ -781,7 +792,8 @@ For AgentTasker V1:
 4.  Repository knowledge is referenced by relative path rather than
     duplicated.
 5.  SQLite stores local paths, including an explicit Python interpreter,
-    execution history, queue/scheduler state, and other runtime information.
+    encrypted Project environment values, execution history, queue/scheduler
+    state, and other runtime information.
 6.  Absolute machine-specific paths are never stored in versioned
     project configuration.
 7.  Runtime state must not generate routine Git changes.

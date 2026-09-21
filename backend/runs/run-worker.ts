@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { db, sqlite } from "../../db/client";
 import { runnerLock, type Run } from "../../db/schema";
 import type { ProjectCommandReport } from "../../src/types/project-command";
+import type { ProjectProcessEnvironment } from "../../src/types/project-execution";
 import { projectService } from "../projects/project.service";
 import { taskService } from "../tasks/task.service";
 import { readString, sectionContent } from "../tasks/toml";
@@ -29,6 +30,8 @@ import {
 import { executeSequenceRun } from "../sequences/sequence-run-worker";
 import { publishRunWorktree } from "../git/run-publication.service";
 import { projectRuntimePreferenceService } from "./project-runtime-preference.service";
+import { projectEnvironmentVariableService } from "./project-environment-variable.service";
+import { createSecretRedactor } from "./secret-redactor";
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -51,7 +54,14 @@ async function executeTaskRun(
   publishWorktree: typeof publishRunWorktree = publishRunWorktree,
 ) {
   let worktree: RunWorktree | undefined;
-  const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
+  let projectEnvironment: ProjectProcessEnvironment = {};
+  let redact = (value: string) => value;
+  const event = (type: string, message: string, raw?: string) => runRepository.event(
+    run.id,
+    type,
+    redact(message),
+    raw === undefined ? undefined : redact(raw),
+  );
   let pythonRuntime: ReturnType<typeof projectExecutionRuntimeStatus>["python"] | undefined;
   const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
     if (!worktree) throw new Error("Project commands require a prepared worktree.");
@@ -73,6 +83,7 @@ async function executeTaskRun(
         cwd: worktree.worktreePath,
         signal: controller.signal,
         pythonRuntime,
+        environment: projectEnvironment,
         onEvent: (entry) => {
           if (entry.type === "started") {
             runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
@@ -115,6 +126,12 @@ async function executeTaskRun(
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
     const localRuntime = await projectRuntimePreferenceService.get(run.projectId);
+    projectEnvironment = projectEnvironmentVariableService.resolve(run.projectId);
+    redact = createSecretRedactor(Object.values(projectEnvironment).filter((value): value is string => value !== undefined));
+    const environmentVariableNames = Object.keys(projectEnvironment).sort();
+    event("environment", environmentVariableNames.length
+      ? `Configured project environment: ${environmentVariableNames.join(", ")}`
+      : "No project environment variables configured.");
     const executionRuntime = projectExecutionRuntimeStatus(executionSettings, localRuntime.pythonExecutable);
     pythonRuntime = executionRuntime.python;
     event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
@@ -135,7 +152,7 @@ async function executeTaskRun(
     const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final Run status. Report a truthful result about the requested work and any other blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
     runRepository.update(run.id, { baseRemote: remote, baseBranch,
       resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, python: pythonRuntime,
-        localExecution: localRuntime, git: gitSettings,
+        localExecution: { ...localRuntime, environmentVariables: environmentVariableNames }, git: gitSettings,
         timeoutMs, expectChanges: task.expectChanges }) });
     controller.signal.throwIfAborted();
     worktree = await prepareRunWorktree({ repoPath: project.repositoryPath,
@@ -156,14 +173,15 @@ async function executeTaskRun(
     // Persist before spawn: a server crash must never certify unknown descendants as stopped.
     runRepository.update(run.id, { terminationVerified: false });
     const result = await executeCodex({ worktreePath: worktree.worktreePath, prompt, config: main, outputSchemaPath,
-      timeoutMs, signal: controller.signal, pythonRuntime, onEvent: (entry) => {
+      timeoutMs, signal: controller.signal, pythonRuntime, environment: projectEnvironment, onEvent: (entry) => {
         if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
         if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);
         else if (entry.type === "codex") event("codex", JSON.stringify(entry.event), JSON.stringify(entry.event));
         else event(entry.type, JSON.stringify(entry));
       } });
     runRepository.update(run.id, { codexPid: result.terminationVerified ? null : result.pid,
-      terminationVerified: result.terminationVerified, exitCode: result.exitCode, result: result.lastAgentMessage });
+      terminationVerified: result.terminationVerified, exitCode: result.exitCode,
+      result: result.lastAgentMessage === null ? null : redact(result.lastAgentMessage) });
     const cancelled = runRepository.get(run.projectId, run.id).cancelRequested;
     if (cancelled || result.cancelled || result.timedOut || result.exitCode !== 0 || result.error) {
       throw new Error(result.error || (cancelled ? "Run cancelled." : result.timedOut ? "Codex timed out." : "Codex did not complete successfully."));
@@ -185,7 +203,7 @@ async function executeTaskRun(
       settings: gitSettings,
       expectedHead: gitResult.commitSha,
       title: `task(${task.id}): ${task.name}`,
-      body: `## AgentTasker Run\n\n- **Task:** ${task.name} (\`${task.id}\`)\n- **Run:** \`${run.id}\`\n- **Base:** \`${remote}/${baseBranch}\` at \`${worktree.baseCommit}\`\n- **Branch:** \`${worktree.branch}\`\n- **Commit:** \`${gitResult.commitSha ?? "none"}\`\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n### Agent summary\n\n${(result.agentResult?.summary ?? result.lastAgentMessage ?? "Run completed successfully.").slice(0, 4_000)}\n\n> Created by AgentTasker. Human review and merge remain required.`,
+      body: `## AgentTasker Run\n\n- **Task:** ${task.name} (\`${task.id}\`)\n- **Run:** \`${run.id}\`\n- **Base:** \`${remote}/${baseBranch}\` at \`${worktree.baseCommit}\`\n- **Branch:** \`${worktree.branch}\`\n- **Commit:** \`${gitResult.commitSha ?? "none"}\`\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n### Agent summary\n\n${redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Run completed successfully.").slice(0, 4_000)}\n\n> Created by AgentTasker. Human review and merge remain required.`,
       signal: controller.signal,
       onEvent: (entry) => {
         event("publication", entry.message, JSON.stringify({ kind: "run-publication", ...entry }));
@@ -205,7 +223,7 @@ async function executeTaskRun(
     }
     event("status", "Success");
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redact(error instanceof Error ? error.message : String(error));
     if (worktree) {
       try {
         const changes = await inspectRunChanges(worktree);

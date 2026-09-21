@@ -71,6 +71,21 @@ Git. AgentTasker does not silently switch to `danger-full-access` when Python is
 blocked. See [Python runtime architecture](docs/python-runtime-architecture.md)
 for detection, sandbox permissions, diagnostics, and Windows limitations.
 
+### Project environment variables
+
+Secrets such as `SERPAPI_API_KEY` should not be copied into a worktree or committed
+in a project `.env`. Open **Project → Settings → Execution → Environment variables**
+and add the variable name and value there. AgentTasker stores each value encrypted
+in its local SQLite state, never returns saved values to the browser, and injects
+them into Codex, dependency installation, and validation commands for that Project.
+Removing a row and saving deletes the local value.
+
+Only variable names are retained in Run diagnostics. Direct occurrences of values
+are redacted from recorded output and PR summaries. Codex still applies the user's
+native `shell_environment_policy`, and API calls also require network access in the
+agent sandbox. The local encryption key lives beside AgentTasker's machine runtime
+state, outside the repository; a backup needs both that key and the SQLite database.
+
 After linking, open any Git repository and run `agenttasker init`. The current
 repository is initialized and queued for registration in the local application;
 AgentTasker is not added to that repository's package dependencies.
@@ -291,6 +306,9 @@ executable paths remain local to the machine and are reported by the Settings an
 Run preflight. When Python is required, install it system-wide where possible,
 select or verify it under **Settings → Execution**, and confirm that the sandbox
 preflight succeeds before running Tasks or Sequences.
+Machine-local environment variables and secrets are configured in the same section;
+they are not part of `.tasker/project.toml` and therefore must be configured separately
+on each machine that runs the Project.
 
 ## 6. Instructions and Knowledge
 

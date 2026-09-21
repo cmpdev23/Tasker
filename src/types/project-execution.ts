@@ -1,6 +1,7 @@
 export const PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "bun"] as const;
 
 export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
+export type ProjectProcessEnvironment = Record<string, string>;
 
 export interface ProjectExecutionSettings {
   defaultTimeoutMinutes: number;
@@ -16,6 +17,19 @@ export interface ProjectExecutionSettings {
 /** Machine-local execution preferences. These values never belong in `.tasker/`. */
 export interface ProjectLocalExecutionSettings {
   pythonExecutable: string | null;
+  /** Values are intentionally omitted from every API response. */
+  environmentVariables: ProjectEnvironmentVariableMetadata[];
+}
+
+export interface ProjectEnvironmentVariableMetadata {
+  name: string;
+  configured: true;
+}
+
+export interface ProjectEnvironmentVariableInput {
+  name: string;
+  /** Omit to retain an already configured value with the same name. */
+  value?: string;
 }
 
 export interface ExecutableStatus {
@@ -70,4 +84,5 @@ export const DEFAULT_PROJECT_EXECUTION_SETTINGS: ProjectExecutionSettings = {
 
 export const DEFAULT_PROJECT_LOCAL_EXECUTION_SETTINGS: ProjectLocalExecutionSettings = {
   pythonExecutable: null,
+  environmentVariables: [],
 };

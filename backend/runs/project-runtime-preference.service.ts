@@ -6,6 +6,8 @@ import { projectRuntimePreferences } from "../../db/schema";
 import { ValidationError } from "../errors";
 import type { ProjectLocalExecutionSettings } from "../../src/types/project-execution";
 
+type ProjectRuntimePreference = Pick<ProjectLocalExecutionSettings, "pythonExecutable">;
+
 export function normalizePythonExecutablePreference(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !value.trim()) {
@@ -26,13 +28,13 @@ export function normalizePythonExecutablePreference(value: unknown): string | nu
 }
 
 export class ProjectRuntimePreferenceService {
-  async get(projectId: string): Promise<ProjectLocalExecutionSettings> {
+  async get(projectId: string): Promise<ProjectRuntimePreference> {
     const preference = db.select().from(projectRuntimePreferences)
       .where(eq(projectRuntimePreferences.projectId, projectId)).get();
     return { pythonExecutable: preference?.pythonExecutable ?? null };
   }
 
-  async set(projectId: string, pythonExecutable: string | null): Promise<ProjectLocalExecutionSettings> {
+  async set(projectId: string, pythonExecutable: string | null): Promise<ProjectRuntimePreference> {
     const normalized = normalizePythonExecutablePreference(pythonExecutable);
     if (normalized === null) {
       db.delete(projectRuntimePreferences).where(eq(projectRuntimePreferences.projectId, projectId)).run();

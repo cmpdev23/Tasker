@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -28,6 +28,20 @@ export const projectRuntimePreferences = sqliteTable("project_runtime_preference
 });
 
 export type ProjectRuntimePreference = typeof projectRuntimePreferences.$inferSelect;
+
+export const projectEnvironmentVariables = sqliteTable("project_environment_variables", {
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  encryptedValue: text("encrypted_value").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+}, (table) => [primaryKey({ columns: [table.projectId, table.name] })]);
+
+export type ProjectEnvironmentVariable = typeof projectEnvironmentVariables.$inferSelect;
 
 export const runs = sqliteTable("runs", {
   id: text("id").primaryKey(),

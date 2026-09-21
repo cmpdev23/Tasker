@@ -4,12 +4,14 @@ import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { runGitEnvironment } from "../git/git-environment";
 import { detectPythonRuntime, withPythonRuntimeEnvironment } from "./python-runtime";
+import { withProjectEnvironment } from "./project-environment";
 import { terminateProcessTree, verifyExitedProcessTree } from "../codex/codex-runner";
 import type {
   ExecutableStatus,
   PackageManager,
   ProjectExecutionRuntimeStatus,
   ProjectExecutionSettings,
+  ProjectProcessEnvironment,
   PythonRuntimeStatus,
 } from "../../src/types/project-execution";
 
@@ -94,8 +96,8 @@ function resolveLaunch(manager: PackageManager, args: string[]): Launch {
   return { executable, args, displayExecutable: executable };
 }
 
-function commandEnvironment(pythonRuntime?: PythonRuntimeStatus): NodeJS.ProcessEnv {
-  const env = runGitEnvironment();
+function commandEnvironment(pythonRuntime?: PythonRuntimeStatus, projectEnvironment?: ProjectProcessEnvironment): NodeJS.ProcessEnv {
+  const env = runGitEnvironment(withProjectEnvironment(process.env, projectEnvironment));
   // Next mutates the server's environment (next dev sets NODE_ENV=development).
   // A nested next build would keep that mode, mix React runtimes and fail at
   // prerendering. Production hosts can also cause installs to omit devDependencies.
@@ -172,7 +174,13 @@ export function assertProjectExecutionRuntime(settings: ProjectExecutionSettings
 
 export async function runProjectCommand(
   command: ProjectCommand,
-  options: { cwd: string; signal?: AbortSignal; onEvent?: (event: ProjectCommandEvent) => void; pythonRuntime?: PythonRuntimeStatus },
+  options: {
+    cwd: string;
+    signal?: AbortSignal;
+    onEvent?: (event: ProjectCommandEvent) => void;
+    pythonRuntime?: PythonRuntimeStatus;
+    environment?: ProjectProcessEnvironment;
+  },
   launchOverride?: { executable: string; prefixArgs?: string[] }
 ): Promise<ProjectCommandResult> {
   if (!path.isAbsolute(options.cwd)) throw new Error("Project command cwd must be absolute.");
@@ -189,7 +197,7 @@ export async function runProjectCommand(
   return new Promise((resolve) => {
     const child = spawn(launch.executable, launch.args, {
       cwd: options.cwd,
-      env: commandEnvironment(options.pythonRuntime),
+      env: commandEnvironment(options.pythonRuntime, options.environment),
       shell: false,
       windowsHide: true,
       detached: process.platform !== "win32",

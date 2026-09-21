@@ -13,12 +13,14 @@ let fixture: Awaited<ReturnType<typeof isolatedRunner>>;
 let executeRun: typeof import("../backend/runs/run-worker").executeRun;
 let sequenceService: typeof import("../backend/sequences/sequence.service").sequenceService;
 let sequenceRunRepository: typeof import("../backend/sequences/sequence-run.repository").sequenceRunRepository;
+let projectEnvironmentVariableService: typeof import("../backend/runs/project-environment-variable.service").projectEnvironmentVariableService;
 
 before(async () => {
   fixture = await isolatedRunner();
   ({ executeRun } = await import("../backend/runs/run-worker"));
   ({ sequenceService } = await import("../backend/sequences/sequence.service"));
   ({ sequenceRunRepository } = await import("../backend/sequences/sequence-run.repository"));
+  ({ projectEnvironmentVariableService } = await import("../backend/runs/project-environment-variable.service"));
 });
 beforeEach(() => fixture.reset());
 after(() => fixture?.close());
@@ -64,9 +66,13 @@ async function sequenceFixture(
 
 test("a Sequence executes its own steps in order in one shared worktree", { timeout: 60_000 }, async () => {
   const { project, repo, sequence, base } = await sequenceFixture(true);
+  projectEnvironmentVariableService.setAll(project.id, [
+    { name: "SEARP_API_KEY", value: "fake-sequence-secret" },
+  ]);
   const prompts: string[] = [];
   let call = 0;
   const fakeCodex: typeof runCodex = async (options) => {
+    assert.deepEqual(options.environment, { SEARP_API_KEY: "fake-sequence-secret" });
     prompts.push(options.prompt);
     call++;
     if (call === 1) fs.writeFileSync(path.join(options.worktreePath, "research.txt"), "keyword opportunity");
@@ -106,6 +112,7 @@ test("a Sequence executes its own steps in order in one shared worktree", { time
   assert.equal(publicationCalls, 1);
   assert.equal(run.pushedAt, "2026-09-14T12:00:00.000Z");
   assert.equal(run.pullRequestUrl, "https://github.com/fixture/agenttasker/pull/42");
+  assert.deepEqual(JSON.parse(run.resolvedConfig ?? "{}").localExecution.environmentVariables, ["SEARP_API_KEY"]);
   assert.match(prompts[0], /step 1 of 3/i);
   assert.match(prompts[1], /Step 1 summary/);
   assert.match(prompts[2], /Step 2 summary/);

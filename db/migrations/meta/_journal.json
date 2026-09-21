@@ -57,6 +57,13 @@
       "when": 1790005130381,
       "tag": "0007_lazy_spencer_smythe",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790008212718,
+      "tag": "0008_careful_tyger_tiger",
+      "breakpoints": true
     }
   ]
 }

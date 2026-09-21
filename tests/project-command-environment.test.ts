@@ -22,6 +22,7 @@ test("project commands choose their own mode regardless of the AgentTasker serve
     assert.equal(process.env.AGENTTASKER_FIXTURE_CREDENTIAL, 'fake-credential');
     assert.equal(process.env.NODE_OPTIONS, '--max-old-space-size=512');
     assert.equal(process.env.GIT_AUTHOR_NAME, 'Fixture Author');
+    assert.equal(process.env.SERPAPI_API_KEY, 'fake-project-secret');
     // Frameworks must select their mode from their command, including custom script names.
     process.env.NODE_ENV = process.argv[2] === 'test:unit' ? 'test' : 'production';
     process.stdout.write(process.env.NODE_ENV);
@@ -41,7 +42,7 @@ test("project commands choose their own mode regardless of the AgentTasker serve
         let output = "";
         let errors = "";
         const result = await runProjectCommand({ name: command, executable: "npm", args: [command], timeoutMs: 10_000 }, {
-          cwd: root, onEvent(event) {
+          cwd: root, environment: { SERPAPI_API_KEY: "fake-project-secret" }, onEvent(event) {
             if (event.type === "stdout") output += event.text;
             if (event.type === "stderr") errors += event.text;
           },

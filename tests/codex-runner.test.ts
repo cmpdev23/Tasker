@@ -83,6 +83,7 @@ test("stdin remains private and stdout, stderr, UTF-8 JSON, final structured res
       if (message.method === 'turn/start') {
         const prompt = message.params.input[0].text;
         if (prompt !== 'private prompt é' || process.argv.includes(prompt)) process.exit(3);
+        if (process.env.SERPAPI_API_KEY !== 'fake-project-secret' || process.argv.includes('fake-project-secret')) process.exit(4);
         process.stderr.write('diagnostic');
         send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
         send({method:'turn/started',params:{turn:{id:'turn-1'}}});
@@ -94,7 +95,8 @@ test("stdin remains private and stdout, stderr, UTF-8 JSON, final structured res
     process.stdin.on('end', () => process.exit(0));`);
   const events: CodexRunEvent[] = [];
   const result = await runCodex({ worktreePath: worktree, prompt: "private prompt é", config,
-    timeoutMs: 10000, outputSchemaPath: schema, onEvent: event => events.push(event) }, launch);
+    timeoutMs: 10000, outputSchemaPath: schema, environment: { SERPAPI_API_KEY: "fake-project-secret" },
+    onEvent: event => events.push(event) }, launch);
   assert.equal(result.exitCode, 0);
   assert.equal(result.error, null);
   assert.equal(result.terminationVerified, true);

@@ -39,3 +39,7 @@
   entre une PR finale et des PR distinctes par étape est une configuration
   versionnée de la Sequence; les publications d’étapes déjà réussies doivent
   rester récupérables lorsqu’une étape suivante échoue.
+- Après une modification d’un worker démarré par `instrumentation.ts`, redémarrer
+  le serveur avant un test réel. Le rechargement à chaud peut actualiser l’API et
+  afficher une sauvegarde réussie tout en laissant le worker de fond sur l’ancien
+  code; vérifier l’événement d’environnement et le snapshot du Run.

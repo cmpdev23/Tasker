@@ -254,6 +254,26 @@ les anciens Runs à événements textuels. `Run.exitCode` est explicitement le c
 **Codex** : zéro ne signifie pas que le build ou les autres validations ont réussi.
 Une commande sans résultat terminal ne devient jamais un succès par déduction.
 
+### Variables d’environnement locales
+
+Les Settings d’exécution peuvent enregistrer des variables propres à une installation,
+par exemple `SERPAPI_API_KEY`. Elles ne sont jamais lues depuis le `.env` du checkout
+principal et aucun fichier de secrets n’est copié dans le worktree. Les noms et valeurs
+sont validés côté serveur; les variables qui contrôlent AgentTasker, Node, Git, Python
+ou les chemins système ne peuvent pas être remplacées.
+
+Les valeurs sont chiffrées localement et injectées uniquement dans l’environnement de
+`codex app-server`, de l’installation des dépendances et des validations. Codex applique
+ensuite sa politique native `shell_environment_policy` aux commandes de l’agent; un
+filtre utilisateur explicite peut donc encore retirer une variable. L’accès à une API
+distante exige également que le réseau soit activé dans le sandbox de l’agent. Voir la
+[politique d’environnement officielle de Codex](https://learn.chatgpt.com/docs/config-file/config-advanced#shell-environment-policy).
+
+Le snapshot du Run et les événements ne conservent que les noms. Avant toute écriture
+de log, résultat, erreur ou description de PR, le worker masque les occurrences directes,
+échappées JSON et encodées URL des valeurs. Cette redaction protège les sorties ordinaires;
+elle ne peut pas garantir le masquage d’une valeur transformée ou fragmentée par un outil.
+
 ### Runtime Python
 
 `python_min_version` est une clé portable optionnelle de `[execution]`. Une valeur

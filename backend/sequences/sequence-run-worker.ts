@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Run } from "../../db/schema";
 import type { ProjectCommandReport } from "../../src/types/project-command";
+import type { ProjectProcessEnvironment } from "../../src/types/project-execution";
 import type { SequenceStepDefinition } from "../../src/types/sequences";
 import { runCodex, CODEX_RUN_OUTPUT_SCHEMA } from "../codex/codex-runner";
 import { agentsService } from "../tasker/agents.service";
@@ -31,6 +32,8 @@ import { sequenceRunRepository } from "./sequence-run.repository";
 import { sequenceService } from "./sequence.service";
 import { publishRunWorktree } from "../git/run-publication.service";
 import { projectRuntimePreferenceService } from "../runs/project-runtime-preference.service";
+import { projectEnvironmentVariableService } from "../runs/project-environment-variable.service";
+import { createSecretRedactor } from "../runs/secret-redactor";
 
 function readProjectFile(repo: string, relative: string): string {
   const file = path.join(repo, relative);
@@ -62,7 +65,14 @@ export async function executeSequenceRun(
   let latestCommit: string | null = null;
   let previousPublicationBranch: string | null = null;
   let pythonRuntime: ReturnType<typeof projectExecutionRuntimeStatus>["python"] | undefined;
-  const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
+  let projectEnvironment: ProjectProcessEnvironment = {};
+  let redact = (value: string) => value;
+  const event = (type: string, message: string, raw?: string) => runRepository.event(
+    run.id,
+    type,
+    redact(message),
+    raw === undefined ? undefined : redact(raw),
+  );
   const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
     if (!worktree) throw new Error("Project commands require a prepared worktree.");
     const display = `${command.executable} ${command.args.join(" ")}`;
@@ -90,6 +100,7 @@ export async function executeSequenceRun(
         cwd: worktree.worktreePath,
         signal: controller.signal,
         pythonRuntime,
+        environment: projectEnvironment,
         onEvent: (entry) => {
           if (entry.type === "started") {
             runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
@@ -135,6 +146,12 @@ export async function executeSequenceRun(
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
     const localRuntime = await projectRuntimePreferenceService.get(run.projectId);
+    projectEnvironment = projectEnvironmentVariableService.resolve(run.projectId);
+    redact = createSecretRedactor(Object.values(projectEnvironment).filter((value): value is string => value !== undefined));
+    const environmentVariableNames = Object.keys(projectEnvironment).sort();
+    event("environment", environmentVariableNames.length
+      ? `Configured project environment: ${environmentVariableNames.join(", ")}`
+      : "No project environment variables configured.");
     const executionRuntime = projectExecutionRuntimeStatus(executionSettings, localRuntime.pythonExecutable);
     pythonRuntime = executionRuntime.python;
     event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
@@ -161,7 +178,7 @@ export async function executeSequenceRun(
         codex: main,
         execution: executionSettings,
         python: pythonRuntime,
-        localExecution: localRuntime,
+        localExecution: { ...localRuntime, environmentVariables: environmentVariableNames },
         git: gitSettings,
         timeoutMs,
         sequence: {
@@ -217,6 +234,7 @@ export async function executeSequenceRun(
         timeoutMs,
         signal: controller.signal,
         pythonRuntime,
+        environment: projectEnvironment,
         onEvent: (entry) => {
           if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
           if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);
@@ -228,11 +246,11 @@ export async function executeSequenceRun(
         codexPid: result.terminationVerified ? null : result.pid,
         terminationVerified: result.terminationVerified,
         exitCode: result.exitCode,
-        result: result.lastAgentMessage,
+        result: result.lastAgentMessage === null ? null : redact(result.lastAgentMessage),
       });
       sequenceRunRepository.update(run.id, step.id, {
         exitCode: result.exitCode,
-        result: result.lastAgentMessage,
+        result: result.lastAgentMessage === null ? null : redact(result.lastAgentMessage),
       });
       const cancelled = runRepository.get(run.projectId, run.id).cancelRequested;
       if (cancelled || result.cancelled || result.timedOut || result.exitCode !== 0 || result.error) {
@@ -270,7 +288,7 @@ export async function executeSequenceRun(
           branch: publicationBranch,
           baseBranch: previousPublicationBranch ?? baseBranch,
           title: `sequence(${sequence.id}): step ${index + 1} ${step.name}`,
-          body: `## AgentTasker Sequence Step\n\n- **Sequence:** ${sequence.name} (\`${sequence.id}\`)\n- **Run:** \`${run.id}\`\n- **Step:** ${index + 1} of ${sequence.steps.length} — ${step.name} (\`${step.id}\`)\n- **Base branch:** \`${previousPublicationBranch ?? baseBranch}\`\n- **Head branch:** \`${publicationBranch}\`\n- **Commit:** \`${gitResult.commitSha}\`\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n### Agent summary\n\n${(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed successfully.").slice(0, 4_000)}\n\n> This is a stacked Sequence step pull request. Review and merge the step pull requests in order.`,
+          body: `## AgentTasker Sequence Step\n\n- **Sequence:** ${sequence.name} (\`${sequence.id}\`)\n- **Run:** \`${run.id}\`\n- **Step:** ${index + 1} of ${sequence.steps.length} — ${step.name} (\`${step.id}\`)\n- **Base branch:** \`${previousPublicationBranch ?? baseBranch}\`\n- **Head branch:** \`${publicationBranch}\`\n- **Commit:** \`${gitResult.commitSha}\`\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n### Agent summary\n\n${redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed successfully.").slice(0, 4_000)}\n\n> This is a stacked Sequence step pull request. Review and merge the step pull requests in order.`,
           signal: controller.signal,
           onEvent: (entry) => {
             event("publication", `[${step.name}] ${entry.message}`,
@@ -304,7 +322,7 @@ export async function executeSequenceRun(
         commitHash: gitResult.commitSha,
         diff: `${gitResult.status}\n${gitResult.diff}`,
       });
-      outcomes.push({ step, summary: result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed." });
+      outcomes.push({ step, summary: redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed.") });
       event("sequence-step", `Step ${index + 1} succeeded: ${step.name}`,
         JSON.stringify({ kind: "sequence-step", state: "success", stepId: step.id, stepName: step.name,
           position: index, commitHash: gitResult.commitSha }));
@@ -358,7 +376,7 @@ export async function executeSequenceRun(
     }
     event("status", `Sequence succeeded (${sequence.steps.length} steps)`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redact(error instanceof Error ? error.message : String(error));
     if (worktree) {
       try {
         const changes = await inspectRunChanges(worktree);

@@ -8,7 +8,8 @@ import type { MainCodexAgentConfig } from "../../src/types/codex-agents";
 import { resolveCodexExecutable } from "./codex-executable";
 import { runGitEnvironment } from "../git/git-environment";
 import { withPythonRuntimeEnvironment } from "../runs/python-runtime";
-import type { PythonRuntimeStatus } from "../../src/types/project-execution";
+import { withProjectEnvironment } from "../runs/project-environment";
+import type { ProjectProcessEnvironment, PythonRuntimeStatus } from "../../src/types/project-execution";
 
 export type CodexRunEvent =
   | { type: "started"; pid: number }
@@ -27,6 +28,8 @@ export interface CodexRunOptions {
   outputSchemaPath?: string;
   /** Selected by the runner from portable project settings; never contains environment values. */
   pythonRuntime?: PythonRuntimeStatus;
+  /** Local project values passed only through the child process environment. */
+  environment?: ProjectProcessEnvironment;
   /** Synchronous ordered sink; persistence/streaming belongs to the worker. */
   onEvent?: (event: CodexRunEvent) => void;
 }
@@ -443,7 +446,8 @@ export async function runCodex(
   const sandboxPolicy = buildCodexSandboxPolicy(options.config, options.worktreePath);
   const args = buildCodexAppServerArgs(options.config, permissionProfile);
   // Git invoked by the agent must resolve its worktree from cwd, never an inherited checkout/index.
-  const env = options.pythonRuntime ? withPythonRuntimeEnvironment(runGitEnvironment(), options.pythonRuntime) : runGitEnvironment();
+  const baseEnvironment = runGitEnvironment(withProjectEnvironment(process.env, options.environment));
+  const env = options.pythonRuntime ? withPythonRuntimeEnvironment(baseEnvironment, options.pythonRuntime) : baseEnvironment;
   return new Promise((resolve) => {
     const child = spawn(launch?.executable ?? resolveCodexExecutable(), [...(launch?.prefixArgs ?? []), ...args], {
       cwd: options.worktreePath,
