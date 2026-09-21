@@ -77,7 +77,10 @@ function RunHistoryChart({ runs }: { runs: Run[] }) {
     >
       {chartRuns.map((run) => {
         const duration = runDuration(run);
-        const height = Math.max(7, Math.round((duration / longestDuration) * 32));
+        const height = Math.max(
+          7,
+          Math.round((duration / longestDuration) * 32),
+        );
         return (
           <span
             key={run.id}
@@ -102,7 +105,12 @@ function SortHeader({
   };
 }) {
   const sorted = column.getIsSorted();
-  const Icon = sorted === "asc" ? ArrowUpIcon : sorted === "desc" ? ArrowDownIcon : ArrowUpDownIcon;
+  const Icon =
+    sorted === "asc"
+      ? ArrowUpIcon
+      : sorted === "desc"
+        ? ArrowDownIcon
+        : ArrowUpDownIcon;
   return (
     <button
       type="button"
@@ -147,32 +155,31 @@ export function TaskRunHistoryGrid({
   const columns = useMemo(
     () =>
       columnHelper.columns([
-        columnHelper.accessor(
-          (run) => run.taskName || run.taskId,
-          {
-            id: "task",
-            header: ({ column }) => <SortHeader label="Tâche" column={column} />,
-            cell: ({ row }) => (
-              <button
-                type="button"
-                onClick={() => onOpen(row.original)}
-                className="block min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span className="block break-words font-medium text-foreground">
-                  {row.original.taskName || row.original.taskId}
-                </span>
-                <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">
-                  {row.original.id}
-                </span>
-              </button>
-            ),
-          },
-        ),
+        columnHelper.accessor((run) => run.taskName || run.taskId, {
+          id: "task",
+          header: ({ column }) => <SortHeader label="Tâche" column={column} />,
+          cell: ({ row }) => (
+            <button
+              type="button"
+              onClick={() => onOpen(row.original)}
+              className="block min-w-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className="block break-words font-medium text-foreground">
+                {row.original.taskName || row.original.taskId}
+              </span>
+              <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">
+                {row.original.id}
+              </span>
+            </button>
+          ),
+        }),
         columnHelper.accessor(
           (run) => Date.parse(run.startedAt || run.queuedAt) || 0,
           {
             id: "executedAt",
-            header: ({ column }) => <SortHeader label="Exécutée le" column={column} />,
+            header: ({ column }) => (
+              <SortHeader label="Exécutée le" column={column} />
+            ),
             sortDescFirst: true,
             cell: ({ row }) => (
               <time
@@ -190,7 +197,7 @@ export function TaskRunHistoryGrid({
         }),
         columnHelper.display({
           id: "history",
-          header: "Build history",
+          header: "History",
           cell: ({ row }) => (
             <RunHistoryChart
               runs={historiesByTask.get(row.original.taskId) || []}
@@ -207,7 +214,9 @@ export function TaskRunHistoryGrid({
             const isRerunning = rerunningTaskId === run.taskId;
             const isRemoving = removingRunId === run.id;
             return (
-              <ButtonGroup aria-label={`Actions pour ${run.taskName || run.taskId}`}>
+              <ButtonGroup
+                aria-label={`Actions pour ${run.taskName || run.taskId}`}
+              >
                 <Button
                   type="button"
                   size="icon-sm"
@@ -225,9 +234,17 @@ export function TaskRunHistoryGrid({
                   disabled={!canRerun || !!rerunningTaskId}
                   onClick={() => onRerun(run)}
                   aria-label={`Réexécuter ${run.taskName || run.taskId}`}
-                  title={canRerun ? "Réexécuter" : "La réexécution est disponible après un échec"}
+                  title={
+                    canRerun
+                      ? "Réexécuter"
+                      : "La réexécution est disponible après un échec"
+                  }
                 >
-                  {isRerunning ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
+                  {isRerunning ? (
+                    <Loader2Icon className="animate-spin" />
+                  ) : (
+                    <RotateCcwIcon />
+                  )}
                 </Button>
                 <Button
                   type="button"
@@ -236,7 +253,11 @@ export function TaskRunHistoryGrid({
                   className="hover:bg-destructive/10 hover:text-destructive"
                   disabled={!canRemove || !!removingRunId}
                   onClick={() => onRemove(run)}
-                  aria-label={run.status === "QUEUED" ? `Retirer le Run ${run.id} de la file` : `Supprimer le Run ${run.id}`}
+                  aria-label={
+                    run.status === "QUEUED"
+                      ? `Retirer le Run ${run.id} de la file`
+                      : `Supprimer le Run ${run.id}`
+                  }
                   title={
                     !canRemove
                       ? "Ce Run ne peut pas encore être supprimé"
@@ -247,7 +268,11 @@ export function TaskRunHistoryGrid({
                           : "Supprimer de l’historique"
                   }
                 >
-                  {isRemoving ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
+                  {isRemoving ? (
+                    <Loader2Icon className="animate-spin" />
+                  ) : (
+                    <Trash2Icon />
+                  )}
                 </Button>
               </ButtonGroup>
             );
@@ -287,7 +312,9 @@ export function TaskRunHistoryGrid({
                   scope="col"
                   className="h-11 px-4 text-left font-medium first:pl-5 last:pr-5"
                 >
-                  {header.isPlaceholder ? null : <table.FlexRender header={header} />}
+                  {header.isPlaceholder ? null : (
+                    <table.FlexRender header={header} />
+                  )}
                 </th>
               ))}
             </tr>
