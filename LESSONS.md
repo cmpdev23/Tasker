@@ -21,6 +21,10 @@
   natif `better-sqlite3` installé, idéalement celui du serveur de développement déjà
   actif. Une série d’erreurs `NODE_MODULE_VERSION` indique un mauvais runtime de
   test, pas des régressions applicatives.
+- Sous Windows, ne jamais conclure qu’un runtime utilisateur est absent à partir
+  d’un terminal sandboxé ou de service : comparer d’abord l’identité Windows, le
+  profil et le `PATH` du processus qui exécutera réellement le Run. Un interpréteur
+  installé dans un autre profil peut exister tout en étant inaccessible au worker.
 - Toute suite de tests doit définir une base temporaire avant l’import d’un module
   backend, y compris les imports transitifs. Le lanceur de suite doit aussi fournir
   une base jetable par défaut afin qu’un nouveau test ne puisse pas écrire dans la

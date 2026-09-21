@@ -6,6 +6,8 @@ import fs from "node:fs/promises";
 import type { MainCodexAgentConfig } from "../../src/types/codex-agents";
 import { resolveCodexExecutable } from "./codex-executable";
 import { runGitEnvironment } from "../git/git-environment";
+import { withPythonRuntimeEnvironment } from "../runs/python-runtime";
+import type { PythonRuntimeStatus } from "../../src/types/project-execution";
 
 export type CodexRunEvent =
   | { type: "started"; pid: number }
@@ -22,6 +24,8 @@ export interface CodexRunOptions {
   terminationGraceMs?: number;
   /** Backend-owned file containing CODEX_RUN_OUTPUT_SCHEMA, outside the worktree. */
   outputSchemaPath?: string;
+  /** Selected by the runner from portable project settings; never contains environment values. */
+  pythonRuntime?: PythonRuntimeStatus;
   /** Synchronous ordered sink; persistence/streaming belongs to the worker. */
   onEvent?: (event: CodexRunEvent) => void;
 }
@@ -333,7 +337,7 @@ export async function runCodex(
   }
   const args = buildCodexExecArgs(options.config, options.worktreePath, options.outputSchemaPath);
   // Git invoked by the agent must resolve its worktree from cwd, never an inherited checkout/index.
-  const env = runGitEnvironment();
+  const env = options.pythonRuntime ? withPythonRuntimeEnvironment(runGitEnvironment(), options.pythonRuntime) : runGitEnvironment();
   return new Promise((resolve) => {
     const child = spawn(launch?.executable ?? resolveCodexExecutable(), [...(launch?.prefixArgs ?? []), ...args], {
       cwd: options.worktreePath,

@@ -22,6 +22,7 @@ import {
   assertProjectExecutionRuntime,
   projectPreparationCommands,
   projectValidationCommands,
+  projectExecutionRuntimeStatus,
   runProjectCommand,
   type ProjectCommand,
 } from "./project-command-runner";
@@ -50,6 +51,7 @@ async function executeTaskRun(
 ) {
   let worktree: RunWorktree | undefined;
   const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
+  let pythonRuntime: ReturnType<typeof projectExecutionRuntimeStatus>["python"] | undefined;
   const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
     if (!worktree) throw new Error("Project commands require a prepared worktree.");
     const display = `${command.executable} ${command.args.join(" ")}`;
@@ -69,6 +71,7 @@ async function executeTaskRun(
       const result = await runProjectCommand(command, {
         cwd: worktree.worktreePath,
         signal: controller.signal,
+        pythonRuntime,
         onEvent: (entry) => {
           if (entry.type === "started") {
             runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
@@ -110,7 +113,10 @@ async function executeTaskRun(
     const task = await taskService.get(run.projectId, run.taskId);
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
-    assertProjectExecutionRuntime(executionSettings);
+    const executionRuntime = projectExecutionRuntimeStatus(executionSettings);
+    pythonRuntime = executionRuntime.python;
+    event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
+    assertProjectExecutionRuntime(executionSettings, pythonRuntime);
     const git = sectionContent(projectToml, "git");
     const gitSettings = parseProjectGitSettings(projectToml);
     const baseBranch = readString(git, "base_branch");
@@ -126,7 +132,7 @@ async function executeTaskRun(
       .map((command) => `- ${command.executable} ${command.args.join(" ")}`).join("\n") || "- None configured";
     const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final Run status. Report a truthful result about the requested work and any other blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
     runRepository.update(run.id, { baseRemote: remote, baseBranch,
-      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, git: gitSettings,
+      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, python: pythonRuntime, git: gitSettings,
         timeoutMs, expectChanges: task.expectChanges }) });
     controller.signal.throwIfAborted();
     worktree = await prepareRunWorktree({ repoPath: project.repositoryPath,
@@ -147,7 +153,7 @@ async function executeTaskRun(
     // Persist before spawn: a server crash must never certify unknown descendants as stopped.
     runRepository.update(run.id, { terminationVerified: false });
     const result = await executeCodex({ worktreePath: worktree.worktreePath, prompt, config: main, outputSchemaPath,
-      timeoutMs, signal: controller.signal, onEvent: (entry) => {
+      timeoutMs, signal: controller.signal, pythonRuntime, onEvent: (entry) => {
         if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
         if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);
         else if (entry.type === "codex") event("codex", JSON.stringify(entry.event), JSON.stringify(entry.event));

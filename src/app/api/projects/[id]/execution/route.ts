@@ -13,7 +13,7 @@ export async function GET(
     const result = await taskerService.getProjectExecutionSettings(id);
     return Response.json({
       ...result,
-      runtime: projectExecutionRuntimeStatus(result.settings.packageManager),
+      runtime: projectExecutionRuntimeStatus(result.settings),
     });
   } catch (error) {
     return errorResponse(error);
@@ -32,7 +32,7 @@ export async function PUT(
     return Response.json({
       success: true,
       ...result,
-      runtime: projectExecutionRuntimeStatus(result.settings.packageManager),
+      runtime: projectExecutionRuntimeStatus(result.settings),
     });
   } catch (error) {
     return errorResponse(error);

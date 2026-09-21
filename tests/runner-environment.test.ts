@@ -61,6 +61,7 @@ test("Git and agent subprocesses cannot inherit routing to the user's checkout o
   const originalIndex = await fs.readFile(path.join(repo, ".git", "index"));
   const originalHead = git(repo, "rev-parse", "HEAD");
   const script = path.join(root, "agent-git-operation.cjs");
+  const pythonExecutable = path.join(root, "python.exe");
   await fs.writeFile(script, `
     const fs = require('node:fs');
     const { execFileSync } = require('node:child_process');
@@ -69,6 +70,10 @@ test("Git and agent subprocesses cannot inherit routing to the user's checkout o
       const expected = ${JSON.stringify(preserved)};
       for (const [key, value] of Object.entries(expected)) {
         if (process.env[key] !== value) throw new Error('Expected test variable to be preserved: ' + key);
+      }
+      if (process.env.PYTHON !== ${JSON.stringify(pythonExecutable)}) throw new Error('Resolved Python executable was not inherited');
+      if (!process.env.PATH.split(${JSON.stringify(path.delimiter)})[0].startsWith(${JSON.stringify(root)})) {
+        throw new Error('Resolved Python directory was not first on PATH');
       }
       fs.writeFileSync('tracked.txt', 'run changes\\n');
       execFileSync('git', ['add', '--', 'tracked.txt'], { stdio: 'pipe', windowsHide: true });
@@ -98,7 +103,9 @@ test("Git and agent subprocesses cannot inherit routing to the user's checkout o
     const committer = await gitService.run(worktree, ["var", "GIT_COMMITTER_IDENT"]);
     assert.match(committer.stdout, /^Run Committer <committer@example\.invalid> /);
     // Use the production spawn path and a real Git mutation in its child process, without calling a model.
-    const result = await runCodex({ worktreePath: worktree, prompt: "Stage the fixture change.", config, timeoutMs: 10_000 },
+    const result = await runCodex({ worktreePath: worktree, prompt: "Stage the fixture change.", config, timeoutMs: 10_000,
+      pythonRuntime: { available: true, executable: pythonExecutable, detail: "Python 3.11.9", minimumVersion: "3.11",
+        version: "3.11.9", candidates: [], attempts: [] } },
       { executable: process.execPath, prefixArgs: [script] });
     assert.equal(result.exitCode, 0, result.error ?? undefined);
     assert.equal(result.error, null);

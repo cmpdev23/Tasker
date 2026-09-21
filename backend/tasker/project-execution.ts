@@ -9,12 +9,14 @@ import {
 const KNOWN_KEYS = [
   "default_timeout_minutes",
   "package_manager",
+  "python_min_version",
   "install_dependencies",
   "install_timeout_minutes",
   "validation_scripts",
   "validation_timeout_minutes",
 ] as const;
 const SCRIPT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,99}$/;
+const PYTHON_VERSION_PATTERN = /^\d+(?:\.\d+){0,2}$/;
 const TOML_STRING = String.raw`(?:(?:"(?:\\.|[^"\\\x00-\x1f])*")|(?:'[^'\x00-\x1f]*'))`;
 
 function executionBounds(lines: string[]): { start: number; end: number } | null {
@@ -87,12 +89,15 @@ export function validateProjectExecutionSettings(input: unknown): ProjectExecuti
     throw new ValidationError("Execution settings must be an object.");
   }
   const value = input as Record<string, unknown>;
-  const allowed = ["defaultTimeoutMinutes", "packageManager", "installDependencies", "installTimeoutMinutes",
+  const allowed = ["defaultTimeoutMinutes", "packageManager", "pythonMinVersion", "installDependencies", "installTimeoutMinutes",
     "validationScripts", "validationTimeoutMinutes"];
   const unknown = Object.keys(value).find((key) => !allowed.includes(key));
   if (unknown) throw new ValidationError(`Unknown execution setting: ${unknown}.`);
   if (!PACKAGE_MANAGERS.includes(value.packageManager as never)) {
     throw new ValidationError("Package manager must be npm, pnpm, yarn, or bun.");
+  }
+  if (value.pythonMinVersion !== null && (typeof value.pythonMinVersion !== "string" || !PYTHON_VERSION_PATTERN.test(value.pythonMinVersion))) {
+    throw new ValidationError("Python minimum version must be null or a version such as 3.11.");
   }
   if (typeof value.installDependencies !== "boolean") {
     throw new ValidationError("installDependencies must be a boolean.");
@@ -105,6 +110,7 @@ export function validateProjectExecutionSettings(input: unknown): ProjectExecuti
   return {
     defaultTimeoutMinutes: integer(value.defaultTimeoutMinutes, "Default Run timeout", 1, 1_440),
     packageManager: value.packageManager as ProjectExecutionSettings["packageManager"],
+    pythonMinVersion: value.pythonMinVersion as string | null,
     installDependencies: value.installDependencies,
     installTimeoutMinutes: integer(value.installTimeoutMinutes, "Install timeout", 1, 120),
     validationScripts: value.validationScripts as string[],
@@ -118,6 +124,7 @@ export function parseProjectExecutionSettings(content: string): ProjectExecution
   const settings = {
     defaultTimeoutMinutes: strictInteger(source, "default_timeout_minutes") ?? DEFAULT_PROJECT_EXECUTION_SETTINGS.defaultTimeoutMinutes,
     packageManager,
+    pythonMinVersion: strictString(source, "python_min_version") ?? DEFAULT_PROJECT_EXECUTION_SETTINGS.pythonMinVersion,
     installDependencies: strictBoolean(source, "install_dependencies") ?? DEFAULT_PROJECT_EXECUTION_SETTINGS.installDependencies,
     installTimeoutMinutes: strictInteger(source, "install_timeout_minutes") ?? DEFAULT_PROJECT_EXECUTION_SETTINGS.installTimeoutMinutes,
     validationScripts: readStringArray(source, "validation_scripts") ?? DEFAULT_PROJECT_EXECUTION_SETTINGS.validationScripts,
@@ -130,6 +137,7 @@ function serializedLines(settings: ProjectExecutionSettings): string[] {
   return [
     `default_timeout_minutes = ${settings.defaultTimeoutMinutes}`,
     `package_manager = ${quoteToml(settings.packageManager)}`,
+    ...(settings.pythonMinVersion ? [`python_min_version = ${quoteToml(settings.pythonMinVersion)}`] : []),
     `install_dependencies = ${settings.installDependencies}`,
     `install_timeout_minutes = ${settings.installTimeoutMinutes}`,
     `validation_scripts = [${settings.validationScripts.map(quoteToml).join(", ")}]`,

@@ -21,6 +21,7 @@ import {
   assertProjectExecutionRuntime,
   projectPreparationCommands,
   projectValidationCommands,
+  projectExecutionRuntimeStatus,
   runProjectCommand,
   type ProjectCommand,
 } from "../runs/project-command-runner";
@@ -59,6 +60,7 @@ export async function executeSequenceRun(
   let activeStepId: string | null = null;
   let latestCommit: string | null = null;
   let previousPublicationBranch: string | null = null;
+  let pythonRuntime: ReturnType<typeof projectExecutionRuntimeStatus>["python"] | undefined;
   const event = (type: string, message: string, raw?: string) => runRepository.event(run.id, type, message, raw);
   const executeProjectCommand = async (command: ProjectCommand, phase: "preparation" | "validation") => {
     if (!worktree) throw new Error("Project commands require a prepared worktree.");
@@ -86,6 +88,7 @@ export async function executeSequenceRun(
       const result = await runProjectCommand(command, {
         cwd: worktree.worktreePath,
         signal: controller.signal,
+        pythonRuntime,
         onEvent: (entry) => {
           if (entry.type === "started") {
             runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
@@ -130,7 +133,10 @@ export async function executeSequenceRun(
     sequenceRunRepository.initialize(run.id, sequence);
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
-    assertProjectExecutionRuntime(executionSettings);
+    const executionRuntime = projectExecutionRuntimeStatus(executionSettings);
+    pythonRuntime = executionRuntime.python;
+    event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
+    assertProjectExecutionRuntime(executionSettings, pythonRuntime);
     const git = sectionContent(projectToml, "git");
     const gitSettings = parseProjectGitSettings(projectToml);
     const baseBranch = readString(git, "base_branch");
@@ -152,6 +158,7 @@ export async function executeSequenceRun(
       resolvedConfig: JSON.stringify({
         codex: main,
         execution: executionSettings,
+        python: pythonRuntime,
         git: gitSettings,
         timeoutMs,
         sequence: {
@@ -206,6 +213,7 @@ export async function executeSequenceRun(
         outputSchemaPath,
         timeoutMs,
         signal: controller.signal,
+        pythonRuntime,
         onEvent: (entry) => {
           if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
           if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);

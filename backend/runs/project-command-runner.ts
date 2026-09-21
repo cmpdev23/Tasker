@@ -3,12 +3,14 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { runGitEnvironment } from "../git/git-environment";
+import { detectPythonRuntime, withPythonRuntimeEnvironment } from "./python-runtime";
 import { terminateProcessTree, verifyExitedProcessTree } from "../codex/codex-runner";
 import type {
   ExecutableStatus,
   PackageManager,
   ProjectExecutionRuntimeStatus,
   ProjectExecutionSettings,
+  PythonRuntimeStatus,
 } from "../../src/types/project-execution";
 
 export interface ProjectCommand {
@@ -92,7 +94,7 @@ function resolveLaunch(manager: PackageManager, args: string[]): Launch {
   return { executable, args, displayExecutable: executable };
 }
 
-function commandEnvironment(): NodeJS.ProcessEnv {
+function commandEnvironment(pythonRuntime?: PythonRuntimeStatus): NodeJS.ProcessEnv {
   const env = runGitEnvironment();
   // Next mutates the server's environment (next dev sets NODE_ENV=development).
   // A nested next build would keep that mode, mix React runtimes and fail at
@@ -113,7 +115,7 @@ function commandEnvironment(): NodeJS.ProcessEnv {
     entries.unshift(nodeDirectory);
   }
   env[key] = entries.join(path.delimiter);
-  return env;
+  return pythonRuntime ? withPythonRuntimeEnvironment(env, pythonRuntime) : env;
 }
 
 export function projectPreparationCommands(settings: ProjectExecutionSettings): ProjectCommand[] {
@@ -150,21 +152,24 @@ function executableStatus(manager: PackageManager): ExecutableStatus {
   }
 }
 
-export function projectExecutionRuntimeStatus(manager: PackageManager): ProjectExecutionRuntimeStatus {
+export function projectExecutionRuntimeStatus(settings: ProjectExecutionSettings): ProjectExecutionRuntimeStatus {
   return {
     node: { available: true, executable: process.execPath, detail: process.version },
-    packageManager: executableStatus(manager),
+    packageManager: executableStatus(settings.packageManager),
+    python: detectPythonRuntime(settings.pythonMinVersion),
   };
 }
 
-export function assertProjectExecutionRuntime(settings: ProjectExecutionSettings): void {
-  if (!settings.installDependencies && settings.validationScripts.length === 0) return;
-  resolveLaunch(settings.packageManager, ["--version"]);
+export function assertProjectExecutionRuntime(settings: ProjectExecutionSettings, pythonRuntime: PythonRuntimeStatus): void {
+  if (settings.installDependencies || settings.validationScripts.length > 0) resolveLaunch(settings.packageManager, ["--version"]);
+  if (settings.pythonMinVersion && !pythonRuntime.available) {
+    throw new Error(`Python ${settings.pythonMinVersion}+ is required but is unavailable to AgentTasker. ${pythonRuntime.detail}`);
+  }
 }
 
 export async function runProjectCommand(
   command: ProjectCommand,
-  options: { cwd: string; signal?: AbortSignal; onEvent?: (event: ProjectCommandEvent) => void },
+  options: { cwd: string; signal?: AbortSignal; onEvent?: (event: ProjectCommandEvent) => void; pythonRuntime?: PythonRuntimeStatus },
   launchOverride?: { executable: string; prefixArgs?: string[] }
 ): Promise<ProjectCommandResult> {
   if (!path.isAbsolute(options.cwd)) throw new Error("Project command cwd must be absolute.");
@@ -181,7 +186,7 @@ export async function runProjectCommand(
   return new Promise((resolve) => {
     const child = spawn(launch.executable, launch.args, {
       cwd: options.cwd,
-      env: commandEnvironment(),
+      env: commandEnvironment(options.pythonRuntime),
       shell: false,
       windowsHide: true,
       detached: process.platform !== "win32",

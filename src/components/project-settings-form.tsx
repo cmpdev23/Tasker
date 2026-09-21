@@ -118,6 +118,7 @@ export function ProjectSettingsForm({
     DEFAULT_PROJECT_EXECUTION_SETTINGS
   );
   const [validationScripts, setValidationScripts] = useState("");
+  const [pythonMinVersion, setPythonMinVersion] = useState("");
   const [executionRuntime, setExecutionRuntime] = useState<ProjectExecutionRuntimeStatus | null>(null);
   const [isLoadingExecution, setIsLoadingExecution] = useState(Boolean(initialProject.repositoryPath));
   const [isSavingExecution, setIsSavingExecution] = useState(false);
@@ -164,6 +165,7 @@ export function ProjectSettingsForm({
       if (signal?.aborted) return;
       setExecutionSettings(data.settings);
       setValidationScripts(data.settings.validationScripts.join("\n"));
+      setPythonMinVersion(data.settings.pythonMinVersion ?? "");
       setExecutionRuntime(data.runtime);
     }).catch((error: unknown) => {
       if (signal?.aborted) return;
@@ -357,12 +359,13 @@ export function ProjectSettingsForm({
       const response = await fetch(`/api/projects/${project.id}/execution`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: { ...executionSettings, validationScripts: scripts } }),
+        body: JSON.stringify({ settings: { ...executionSettings, pythonMinVersion: pythonMinVersion.trim() || null, validationScripts: scripts } }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to save execution settings.");
       setExecutionSettings(data.settings);
       setValidationScripts(data.settings.validationScripts.join("\n"));
+      setPythonMinVersion(data.settings.pythonMinVersion ?? "");
       setExecutionRuntime(data.runtime);
       toast.success("Execution settings saved in .tasker/project.toml.");
     } catch (error) {
@@ -899,6 +902,24 @@ export function ProjectSettingsForm({
 
               <Separator />
 
+              <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
+                <dt className="text-muted-foreground text-sm font-medium">Python runtime</dt>
+                <dd className="flex max-w-md flex-col gap-1.5">
+                  <Input
+                    value={pythonMinVersion}
+                    onChange={(event) => setPythonMinVersion(event.target.value)}
+                    placeholder="Optional minimum, e.g. 3.11"
+                    className="font-mono text-xs"
+                    inputMode="decimal"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave empty when Python is optional. A configured version requires that version or newer; the local path is resolved for each Run.
+                  </p>
+                </dd>
+              </div>
+
+              <Separator />
+
               <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-center">
                 <dt className="text-muted-foreground text-sm font-medium">Install dependencies</dt>
                 <dd className="flex flex-col gap-1.5">
@@ -973,21 +994,31 @@ export function ProjectSettingsForm({
               <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
                 <dt className="text-muted-foreground text-sm font-medium">Runtime preflight</dt>
                 <dd className="flex flex-col gap-2 text-xs">
-                  {(["node", "packageManager"] as const).map((key) => {
+                  {(["node", "packageManager", "python"] as const).map((key) => {
                     const status = executionRuntime?.[key];
-                    const label = key === "node" ? "Node.js" : executionSettings.packageManager;
+                    const pythonCandidates = key === "python" ? executionRuntime?.python.candidates ?? [] : [];
+                    const label = key === "node" ? "Node.js" : key === "python"
+                      ? (executionSettings.pythonMinVersion ? `Python ${executionSettings.pythonMinVersion}+` : "Python (optional)")
+                      : executionSettings.packageManager;
                     return (
-                      <div key={key} className="flex min-w-0 items-center gap-2">
-                        <Badge
-                          tone={status == null ? "outline" : status.available ? "success" : "destructive"}
-                          variant="dot-outline"
-                        >
-                          {status == null ? "Not checked" : status.available ? "Available" : "Unavailable"}
-                        </Badge>
-                        <span className="font-medium">{label}</span>
-                        <span className="truncate font-mono text-muted-foreground" title={status?.executable || status?.detail || undefined}>
-                          {status?.detail || status?.executable || "Save to refresh this check"}
-                        </span>
+                      <div key={key} className="flex min-w-0 flex-col gap-1">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Badge
+                            tone={status == null ? "outline" : status.available ? "success" : "destructive"}
+                            variant="dot-outline"
+                          >
+                            {status == null ? "Not checked" : status.available ? "Available" : "Unavailable"}
+                          </Badge>
+                          <span className="font-medium">{label}</span>
+                          <span className="truncate font-mono text-muted-foreground" title={status?.executable || status?.detail || undefined}>
+                            {status?.detail || status?.executable || "Save to refresh this check"}
+                          </span>
+                        </div>
+                        {pythonCandidates.map((candidate) => (
+                          <span key={`${candidate.command}-${candidate.executable}`} className="pl-20 font-mono text-muted-foreground">
+                            {candidate.command}: Python {candidate.version} — {candidate.executable}
+                          </span>
+                        ))}
                       </div>
                     );
                   })}

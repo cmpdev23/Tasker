@@ -22,6 +22,7 @@ import {
 const configured: ProjectExecutionSettings = {
   defaultTimeoutMinutes: 240,
   packageManager: "npm",
+  pythonMinVersion: "3.11",
   installDependencies: true,
   installTimeoutMinutes: 12,
   validationScripts: ["lint", "typecheck", "build"],
@@ -45,6 +46,7 @@ test("execution settings default safely and round-trip without replacing unrelat
   assert.ok(updated.includes('base_branch = "main"'));
   assert.ok(updated.includes('# retained\r\nfuture_key = "kept"'));
   assert.ok(updated.includes('validation_scripts = ["lint", "typecheck", "build"]'));
+  assert.ok(updated.includes('python_min_version = "3.11"'));
   assert.deepEqual(parseProjectExecutionSettings(updated), configured);
 });
 
@@ -55,9 +57,11 @@ test("execution settings reject ambiguous, malformed, unsafe, and unbounded valu
     '[execution]\nvalidation_scripts = "build"\n',
     '[execution]\npackage_manager = "deno"\n',
     '[execution]\npackage_manager = "npm"\npackage_manager = "bun"\n',
+    '[execution]\npython_min_version = "latest"\n',
     '[execution]\n[execution]\n',
   ]) assert.throws(() => parseProjectExecutionSettings(source));
   assert.throws(() => validateProjectExecutionSettings({ ...configured, validationScripts: ["build && publish"] }));
+  assert.throws(() => validateProjectExecutionSettings({ ...configured, pythonMinVersion: "3.11; rm" }));
   assert.throws(() => validateProjectExecutionSettings({ ...configured, validationScripts: ["build", "build"] }));
   assert.throws(() => updateProjectExecutionToml('[execution]\npackage_manager = "npm"\npackage_manager = "bun"\n', configured));
 });

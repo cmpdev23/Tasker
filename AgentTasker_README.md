@@ -172,10 +172,11 @@ Possible project defaults include worktree location, cleanup behavior,
 and whether failed work should be preserved.
 
 The current V1 exposes the package manager, optional locked dependency
-installation, ordered `package.json` validation scripts, and separate Run,
-installation, and validation timeouts. These portable settings are stored under
-`[execution]` in `.tasker/project.toml`; executable paths remain local to the
-machine and are only reported by the Settings preflight.
+installation, ordered `package.json` validation scripts, separate Run,
+installation, and validation timeouts, plus an optional portable Python minimum
+version. These settings are stored under `[execution]` in `.tasker/project.toml`;
+executable paths remain local to the machine and are reported by the Settings and
+Run preflight.
 
 ## 6. Instructions and Knowledge
 
