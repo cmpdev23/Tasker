@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog";
 import { TaskEditorDialog } from "@/components/task-editor-dialog";
 import { RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
+import { TaskRunHistoryGrid } from "@/components/task-run-history-grid";
 import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
 import {
   errorMessage,
@@ -781,82 +782,20 @@ function TasksView({
                   : "Aucune exécution dans l’historique chargé."}
               </p>
             ) : (
-              <ul className="max-h-[32rem] divide-y overflow-y-auto">
-                {visibleRuns.map((run) => {
-                  const taskExists = tasks.some(
-                    (task) => task.id === run.taskId,
-                  );
-                  return (
-                    <li
-                      key={run.id}
-                      className="flex items-center gap-2 pr-4 transition-colors hover:bg-muted/30"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedRun(run)}
-                        className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3 px-4 py-3 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block break-words text-sm font-medium">
-                            {run.taskName || run.taskId}
-                          </span>
-                          <span className="mt-1 block text-xs text-muted-foreground">
-                            {formatRunDate(run.startedAt || run.queuedAt)}
-                          </span>
-                          <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">
-                            {run.id}
-                          </span>
-                        </span>
-                        <RunStatusBadge status={run.status} />
-                      </button>
-                      {isRerunnableRun(run.status) && taskExists && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={!!starting || !!taskError}
-                          onClick={() => void runNow(run.taskId)}
-                          title="Créer un nouveau Run avec la configuration actuelle"
-                        >
-                          {starting === run.taskId ? (
-                            <Loader2Icon className="size-4 animate-spin" />
-                          ) : (
-                            <RotateCcwIcon className="size-4" />
-                          )}
-                          Réexécuter
-                        </Button>
-                      )}
-                      {isRemovableRun(run) && (
-                        <Button
-                          type="button"
-                          size="icon-sm"
-                          variant="ghost"
-                          disabled={!!removingRun}
-                          onClick={() => void removeRun(run)}
-                          aria-label={
-                            run.status === "QUEUED"
-                              ? `Retirer le Run ${run.id} de la file`
-                              : `Supprimer le Run ${run.id}`
-                          }
-                          title={
-                            run.status === "QUEUED"
-                              ? "Retirer de la file"
-                              : run.worktreePath || run.runBranch
-                                ? "Supprimer le Run et son travail préservé"
-                                : "Supprimer de l’historique"
-                          }
-                        >
-                          {removingRun === run.id ? (
-                            <Loader2Icon className="size-4 animate-spin" />
-                          ) : (
-                            <Trash2Icon className="size-4" />
-                          )}
-                        </Button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+              <TaskRunHistoryGrid
+                runs={visibleRuns}
+                isRerunnable={(run) =>
+                  isRerunnableRun(run.status) &&
+                  tasks.some((task) => task.id === run.taskId) &&
+                  !taskError
+                }
+                isRemovable={isRemovableRun}
+                rerunningTaskId={starting}
+                removingRunId={removingRun}
+                onOpen={setSelectedRun}
+                onRerun={(run) => void runNow(run.taskId)}
+                onRemove={(run) => void removeRun(run)}
+              />
             )}
             {olderError && (
               <p role="alert" className="px-4 py-3 text-sm text-destructive">
