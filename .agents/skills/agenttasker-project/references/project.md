@@ -52,6 +52,9 @@ Rules:
   publication. A pull request requires push. Draft pull requests are the safe
   default. AgentTasker never auto-merges.
 - `package_manager` is one of `npm`, `pnpm`, `yarn`, or `bun`.
+- `python_min_version` is optional. Set a portable minimum such as `"3.11"`
+  only when every Run needs Python; omit it when Python is optional. AgentTasker
+  resolves the actual local interpreter at Run start and never stores its path.
 - Timeouts are whole minutes. Run timeout: 1–1440. Installation and validation
   timeouts: 1–120.
 - `validation_scripts` is a one-line TOML array containing at most 20 distinct

@@ -74,6 +74,10 @@ ne sont jamais des commandes shell libres.
   dépôt et l'accès réseau éventuel dans chaque worktree. Indiquer clairement ce
   choix, car sans installation les validations exigent que les dépendances soient
   déjà disponibles dans le worktree.
+- Si le workflow requiert Python, définir `python_min_version` à partir de sa
+  compatibilité documentée (par exemple `"3.11"`). Omettre la clé lorsque Python
+  est facultatif. Ne jamais écrire un chemin d’interpréteur dans `project.toml` :
+  AgentTasker le résout localement pour chaque Run.
 
 Ne pas modifier la table `[git]` dans ce parcours. Ne jamais ajouter une commande,
 un secret, un chemin absolu, une variable d'environnement ou de l'état de Run dans
