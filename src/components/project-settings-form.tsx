@@ -38,6 +38,7 @@ import {
   PACKAGE_MANAGERS,
   type ProjectExecutionRuntimeStatus,
   type ProjectExecutionSettings,
+  type ProjectLocalExecutionSettings,
 } from "@/types/project-execution";
 import {
   DEFAULT_PROJECT_GIT_SETTINGS,
@@ -119,6 +120,9 @@ export function ProjectSettingsForm({
   );
   const [validationScripts, setValidationScripts] = useState("");
   const [pythonMinVersion, setPythonMinVersion] = useState("");
+  const [pythonRuntimeMode, setPythonRuntimeMode] = useState<"auto" | "explicit">("auto");
+  const [localPythonExecutable, setLocalPythonExecutable] = useState("");
+  const [isBrowsingPython, setIsBrowsingPython] = useState(false);
   const [executionRuntime, setExecutionRuntime] = useState<ProjectExecutionRuntimeStatus | null>(null);
   const [isLoadingExecution, setIsLoadingExecution] = useState(Boolean(initialProject.repositoryPath));
   const [isSavingExecution, setIsSavingExecution] = useState(false);
@@ -166,6 +170,9 @@ export function ProjectSettingsForm({
       setExecutionSettings(data.settings);
       setValidationScripts(data.settings.validationScripts.join("\n"));
       setPythonMinVersion(data.settings.pythonMinVersion ?? "");
+      const localRuntime = data.localRuntime as ProjectLocalExecutionSettings | undefined;
+      setLocalPythonExecutable(localRuntime?.pythonExecutable ?? "");
+      setPythonRuntimeMode(localRuntime?.pythonExecutable ? "explicit" : "auto");
       setExecutionRuntime(data.runtime);
     }).catch((error: unknown) => {
       if (signal?.aborted) return;
@@ -359,20 +366,49 @@ export function ProjectSettingsForm({
       const response = await fetch(`/api/projects/${project.id}/execution`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ settings: { ...executionSettings, pythonMinVersion: pythonMinVersion.trim() || null, validationScripts: scripts } }),
+        body: JSON.stringify({
+          settings: { ...executionSettings, pythonMinVersion: pythonMinVersion.trim() || null, validationScripts: scripts },
+          localRuntime: { pythonExecutable: pythonRuntimeMode === "explicit" ? localPythonExecutable.trim() || null : null },
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Failed to save execution settings.");
       setExecutionSettings(data.settings);
       setValidationScripts(data.settings.validationScripts.join("\n"));
       setPythonMinVersion(data.settings.pythonMinVersion ?? "");
+      setLocalPythonExecutable(data.localRuntime?.pythonExecutable ?? "");
+      setPythonRuntimeMode(data.localRuntime?.pythonExecutable ? "explicit" : "auto");
       setExecutionRuntime(data.runtime);
-      toast.success("Execution settings saved in .tasker/project.toml.");
+      if ((pythonRuntimeMode === "explicit" || Boolean(pythonMinVersion.trim())) &&
+          data.runtime?.python?.sandbox?.checked && !data.runtime.python.sandbox.available) {
+        toast.warning("Settings saved, but Python is not executable inside the Codex sandbox.");
+      } else {
+        toast.success("Portable execution settings and local runtime preference saved.");
+      }
     } catch (error) {
       console.error(error);
       toast.error(error instanceof Error ? error.message : "Failed to save execution settings.");
     } finally {
       setIsSavingExecution(false);
+    }
+  };
+
+  const handleBrowsePython = async () => {
+    setIsBrowsingPython(true);
+    try {
+      const response = await fetch("/api/filesystem/browse-python", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "Failed to select Python.");
+      if (!data.canceled && data.path) {
+        setPythonRuntimeMode("explicit");
+        setLocalPythonExecutable(data.path);
+        setExecutionRuntime(null);
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : "Failed to select Python.");
+    } finally {
+      setIsBrowsingPython(false);
     }
   };
 
@@ -904,7 +940,7 @@ export function ProjectSettingsForm({
 
               <div className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(10rem,0.95fr)_minmax(0,1.35fr)] sm:gap-5 sm:items-start">
                 <dt className="text-muted-foreground text-sm font-medium">Python runtime</dt>
-                <dd className="flex max-w-md flex-col gap-1.5">
+                <dd className="flex max-w-lg flex-col gap-3">
                   <Input
                     value={pythonMinVersion}
                     onChange={(event) => setPythonMinVersion(event.target.value)}
@@ -913,8 +949,46 @@ export function ProjectSettingsForm({
                     inputMode="decimal"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Leave empty when Python is optional. A configured version requires that version or newer; the local path is resolved for each Run.
+                    Portable minimum stored in .tasker/project.toml. Leave empty when Python is optional.
                   </p>
+                  <div className="flex flex-col gap-2 rounded-md border p-3">
+                    <Select
+                      value={pythonRuntimeMode}
+                      onValueChange={(value) => {
+                        if (value !== "auto" && value !== "explicit") return;
+                        setPythonRuntimeMode(value);
+                        setExecutionRuntime(null);
+                      }}
+                    >
+                      <SelectTrigger className="w-56 text-xs">
+                        <SelectValue>{pythonRuntimeMode === "auto" ? "Auto-detect (recommended)" : "Specific local interpreter"}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent align="start" alignItemWithTrigger={false}>
+                        <SelectItem value="auto">Auto-detect (recommended)</SelectItem>
+                        <SelectItem value="explicit">Specific local interpreter</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {pythonRuntimeMode === "explicit" && (
+                      <div className="flex gap-2">
+                        <Input
+                          value={localPythonExecutable}
+                          onChange={(event) => {
+                            setLocalPythonExecutable(event.target.value);
+                            setExecutionRuntime(null);
+                          }}
+                          placeholder="C:\\...\\python.exe"
+                          className="min-w-0 font-mono text-xs"
+                        />
+                        <Button type="button" variant="outline" onClick={handleBrowsePython} disabled={isBrowsingPython} className="shrink-0 gap-1.5">
+                          {isBrowsingPython ? <Loader2Icon className="size-4 animate-spin" /> : <FolderOpenIcon className="size-4" />}
+                          Browse
+                        </Button>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      The selected path is machine-local SQLite state. It is never written to the repository.
+                    </p>
+                  </div>
                 </dd>
               </div>
 
@@ -1019,6 +1093,11 @@ export function ProjectSettingsForm({
                             {candidate.command}: Python {candidate.version} — {candidate.executable}
                           </span>
                         ))}
+                        {key === "python" && executionRuntime?.python.sandbox.checked && (
+                          <span className={`pl-20 text-xs ${executionRuntime.python.sandbox.available ? "text-muted-foreground" : "text-destructive"}`}>
+                            Sandbox: {executionRuntime.python.sandbox.detail}
+                          </span>
+                        )}
                       </div>
                     );
                   })}

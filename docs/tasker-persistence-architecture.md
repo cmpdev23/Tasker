@@ -266,7 +266,9 @@ noms de scripts en commandes déterministes du gestionnaire choisi; il ne stocke
 pas de chemins absolus vers Node ou npm et n’accepte pas de commande shell libre.
 `python_min_version` peut optionnellement déclarer une version Python minimale
 portable (par exemple `"3.11"`); le chemin de l’interpréteur reste résolu et
-historisé localement pour chaque Run.
+historisé localement pour chaque Run. Un interpréteur choisi explicitement dans
+l’interface est une préférence de machine enregistrée dans SQLite, jamais dans
+`project.toml`.
 L’installation reste désactivée par défaut et doit être activée explicitement dans
 Settings pour un dépôt de confiance. Les overrides de ces réglages par Task restent
 une extension future.
@@ -403,6 +405,7 @@ Examples include:
 -   process identifiers;
 -   temporary worktree paths;
 -   local application preferences;
+-   explicit local Python interpreter paths;
 -   machine-specific integration state;
 -   timestamps and execution history.
 
@@ -472,7 +475,15 @@ Project identity/configuration
 
 Local checkout location
 → SQLite
+
+Local Python interpreter override
+→ SQLite (`project_runtime_preferences`)
 ```
+
+Le chemin Python explicite suit la même règle que le checkout : il peut contenir
+un profil utilisateur Windows ou une installation propre à la machine. Il est
+validé et résolu localement avant d’être enregistré. Seule l’exigence portable
+`python_min_version` appartient à `.tasker/project.toml`.
 
 ------------------------------------------------------------------------
 
@@ -580,6 +591,7 @@ portable project configuration.
   Schedule definitions                       ✓ 
   Git strategy                               ✓ 
   Local repository path                                               ✓
+  Local Python interpreter path                                       ✓
   Run history                                                         ✓
   Run events                                                          ✓
   SequenceStep Run state                                              ✓
@@ -768,8 +780,8 @@ For AgentTasker V1:
     configuration.
 4.  Repository knowledge is referenced by relative path rather than
     duplicated.
-5.  SQLite stores local paths, execution history, queue/scheduler state,
-    and other runtime information.
+5.  SQLite stores local paths, including an explicit Python interpreter,
+    execution history, queue/scheduler state, and other runtime information.
 6.  Absolute machine-specific paths are never stored in versioned
     project configuration.
 7.  Runtime state must not generate routine Git changes.

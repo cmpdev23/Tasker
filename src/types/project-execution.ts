@@ -13,6 +13,11 @@ export interface ProjectExecutionSettings {
   validationTimeoutMinutes: number;
 }
 
+/** Machine-local execution preferences. These values never belong in `.tasker/`. */
+export interface ProjectLocalExecutionSettings {
+  pythonExecutable: string | null;
+}
+
 export interface ExecutableStatus {
   available: boolean;
   executable: string | null;
@@ -29,14 +34,28 @@ export interface PythonRuntimeCandidate {
   command: string;
   executable: string;
   version: string;
+  prefix: string;
+  basePrefix: string;
+  source: "auto" | "explicit";
+}
+
+export interface PythonSandboxStatus {
+  checked: boolean;
+  available: boolean;
+  detail: string;
 }
 
 /** Diagnostic data contains only executable paths and versions, never environment values. */
 export interface PythonRuntimeStatus extends ExecutableStatus {
   minimumVersion: string | null;
   version: string | null;
+  prefix: string | null;
+  basePrefix: string | null;
+  source: "auto" | "explicit" | null;
+  readableRoots: string[];
   candidates: PythonRuntimeCandidate[];
   attempts: string[];
+  sandbox: PythonSandboxStatus;
 }
 
 export const DEFAULT_PROJECT_EXECUTION_SETTINGS: ProjectExecutionSettings = {
@@ -47,4 +66,8 @@ export const DEFAULT_PROJECT_EXECUTION_SETTINGS: ProjectExecutionSettings = {
   installTimeoutMinutes: 15,
   validationScripts: [],
   validationTimeoutMinutes: 20,
+};
+
+export const DEFAULT_PROJECT_LOCAL_EXECUTION_SETTINGS: ProjectLocalExecutionSettings = {
+  pythonExecutable: null,
 };

@@ -1,13 +1,15 @@
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import type { PythonRuntimeCandidate, PythonRuntimeStatus } from "../../src/types/project-execution";
 
-const PROBE = "import json,sys; print(json.dumps({'executable': sys.executable, 'version': '.'.join(map(str, sys.version_info[:3]))}))";
+const PROBE = "import json,sys; print(json.dumps({'executable': sys.executable, 'version': '.'.join(map(str, sys.version_info[:3])), 'prefix': sys.prefix, 'basePrefix': sys.base_prefix}))";
 
 export interface PythonProbe {
   command: string;
   args: string[];
   label: string;
+  source: "auto" | "explicit";
 }
 
 type ProbeResult = { stdout: string } | null;
@@ -29,15 +31,18 @@ export function pythonVersionAtLeast(version: string, minimum: string): boolean 
   return true;
 }
 
-export function pythonProbes(minimumVersion: string | null): PythonProbe[] {
+export function pythonProbes(minimumVersion: string | null, explicitExecutable: string | null = null): PythonProbe[] {
+  if (explicitExecutable) {
+    return [{ command: explicitExecutable, args: ["-c", PROBE], label: "configured interpreter", source: "explicit" }];
+  }
   const probes: PythonProbe[] = [];
   if (process.platform === "win32" && minimumVersion) {
-    probes.push({ command: "py", args: [`-${minimumVersion}`, "-c", PROBE], label: `py -${minimumVersion}` });
+    probes.push({ command: "py", args: [`-${minimumVersion}`, "-c", PROBE], label: `py -${minimumVersion}`, source: "auto" });
   }
-  if (process.platform === "win32") probes.push({ command: "py", args: ["-3", "-c", PROBE], label: "py -3" });
+  if (process.platform === "win32") probes.push({ command: "py", args: ["-3", "-c", PROBE], label: "py -3", source: "auto" });
   probes.push(
-    { command: "python", args: ["-c", PROBE], label: "python" },
-    { command: "python3", args: ["-c", PROBE], label: "python3" },
+    { command: "python", args: ["-c", PROBE], label: "python", source: "auto" },
+    { command: "python3", args: ["-c", PROBE], label: "python3", source: "auto" },
   );
   return probes;
 }
@@ -60,13 +65,28 @@ function candidateFromProbe(probe: PythonProbe, result: ProbeResult): PythonRunt
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
     if (typeof record.executable !== "string" || !path.isAbsolute(record.executable) ||
-        typeof record.version !== "string" || !versionParts(record.version)) return null;
-    return { command: probe.label, executable: record.executable, version: record.version };
+        typeof record.version !== "string" || !versionParts(record.version) ||
+        typeof record.prefix !== "string" || !path.isAbsolute(record.prefix) ||
+        typeof record.basePrefix !== "string" || !path.isAbsolute(record.basePrefix)) return null;
+    return { command: probe.label, executable: path.resolve(record.executable), version: record.version,
+      prefix: path.resolve(record.prefix), basePrefix: path.resolve(record.basePrefix), source: probe.source };
   } catch { return null; }
 }
 
-export function detectPythonRuntime(minimumVersion: string | null, probe: PythonRuntimeProbe = runProbe): PythonRuntimeStatus {
-  const probes = pythonProbes(minimumVersion);
+function runtimeReadableRoots(candidate: PythonRuntimeCandidate | null): string[] {
+  if (!candidate) return [];
+  const filesystemRoot = path.parse(candidate.basePrefix).root;
+  const home = path.resolve(os.homedir());
+  return [...new Set([candidate.basePrefix, candidate.prefix].map((entry) => path.resolve(entry)))]
+    .filter((entry) => entry !== filesystemRoot && entry !== home);
+}
+
+export function detectPythonRuntime(
+  minimumVersion: string | null,
+  probe: PythonRuntimeProbe = runProbe,
+  explicitExecutable: string | null = null,
+): PythonRuntimeStatus {
+  const probes = pythonProbes(minimumVersion, explicitExecutable);
   const candidates = probes.flatMap((candidate) => {
     const detected = candidateFromProbe(candidate, probe(candidate));
     return detected ? [detected] : [];
@@ -79,7 +99,9 @@ export function detectPythonRuntime(minimumVersion: string | null, probe: Python
       ? `Detected ${candidates.map((candidate) => `Python ${candidate.version} via ${candidate.command}`).join(", ")}, but none satisfies ${minimumVersion}+.`
       : `No Python runtime detected. Checked ${attempts.join(", ")}.`;
   return { available: Boolean(selected), executable: selected?.executable ?? null, detail, minimumVersion,
-    version: selected?.version ?? null, candidates, attempts };
+    version: selected?.version ?? null, prefix: selected?.prefix ?? null, basePrefix: selected?.basePrefix ?? null,
+    source: selected?.source ?? null, readableRoots: runtimeReadableRoots(selected), candidates, attempts,
+    sandbox: { checked: false, available: false, detail: "Sandbox access has not been checked." } };
 }
 
 /** Adds only the selected interpreter directory; it never reads project env files or replaces PATH. */
@@ -92,5 +114,6 @@ export function withPythonRuntimeEnvironment(source: NodeJS.ProcessEnv, runtime:
   if (!entries.some((entry) => path.resolve(entry).toLowerCase() === path.resolve(directory).toLowerCase())) entries.unshift(directory);
   env[pathKey] = entries.join(path.delimiter);
   env.PYTHON = runtime.executable;
+  env.PYTHONDONTWRITEBYTECODE = "1";
   return env;
 }

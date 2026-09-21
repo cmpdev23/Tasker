@@ -3,6 +3,7 @@ import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createInterface } from "node:readline";
 import type { MainCodexAgentConfig } from "../../src/types/codex-agents";
 import { resolveCodexExecutable } from "./codex-executable";
 import { runGitEnvironment } from "../git/git-environment";
@@ -78,19 +79,37 @@ const execFileAsync = promisify(execFile);
 const MAX_EVENT_LINE = 2 * 1024 * 1024;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 
-/** Every configured permission is explicit; never use --full-auto or bypass flags. */
-export function buildCodexExecArgs(config: MainCodexAgentConfig, worktreePath: string, outputSchemaPath?: string): string[] {
-  const args = ["exec", "--json", "--color", "never", "--cd", worktreePath];
+/** App-server process settings that are not expressible as per-turn protocol fields. */
+export interface CodexPermissionProfile {
+  id: string;
+  configOverrides: string[];
+}
+
+export function buildCodexPermissionProfile(
+  config: MainCodexAgentConfig,
+  readableRoots: string[],
+): CodexPermissionProfile | null {
+  if (config.sandbox_mode === "danger-full-access" || readableRoots.length === 0) return null;
+  const id = "agenttasker-run";
+  const base = config.sandbox_mode === "read-only" ? ":read-only" : ":workspace";
+  const roots = [...new Set(readableRoots.map((entry) => path.resolve(entry)))];
+  const filesystem = roots.map((root) => `${JSON.stringify(root)} = "read"`).join(", ");
+  const overrides = [
+    `default_permissions=${JSON.stringify(id)}`,
+    `permissions.${id}={ extends = ${JSON.stringify(base)}, filesystem = { ${filesystem} } }`,
+  ];
+  return { id, configOverrides: overrides };
+}
+
+export function buildCodexAppServerArgs(
+  config: MainCodexAgentConfig,
+  permissionProfile: CodexPermissionProfile | null = null,
+): string[] {
+  const args = ["app-server"];
   const set = (key: string, value: string | boolean | number) => {
     args.push("-c", `${key}=${JSON.stringify(value)}`);
   };
-  if (config.model) set("model", config.model);
-  set("model_reasoning_effort", config.model_reasoning_effort);
-  set("model_reasoning_summary", config.model_reasoning_summary);
   set("model_verbosity", config.model_verbosity);
-  set("sandbox_mode", config.sandbox_mode);
-  set("approval_policy", config.approval_policy);
-  set("sandbox_workspace_write.network_access", config.sandbox_workspace_write.network_access);
   set("agents.enabled", config.agents.enabled);
   set("agents.interrupt_message", config.agents.interrupt_message);
   if (config.agents.max_concurrent_threads_per_session !== null) {
@@ -98,9 +117,88 @@ export function buildCodexExecArgs(config: MainCodexAgentConfig, worktreePath: s
   }
   if (config.agents.default_subagent_model) set("agents.default_subagent_model", config.agents.default_subagent_model);
   if (config.agents.default_subagent_reasoning_effort) set("agents.default_subagent_reasoning_effort", config.agents.default_subagent_reasoning_effort);
-  if (outputSchemaPath) args.push("--output-schema", outputSchemaPath);
-  args.push("-");
+  for (const override of permissionProfile?.configOverrides ?? []) args.push("-c", override);
   return args;
+}
+
+type CodexSandboxPolicy =
+  | { type: "dangerFullAccess" }
+  | { type: "readOnly"; networkAccess: boolean }
+  | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean;
+      excludeTmpdirEnvVar: boolean; excludeSlashTmp: boolean };
+
+export function buildCodexSandboxPolicy(
+  config: MainCodexAgentConfig,
+  worktreePath: string,
+): CodexSandboxPolicy {
+  if (config.sandbox_mode === "danger-full-access") return { type: "dangerFullAccess" };
+  if (config.sandbox_mode === "read-only") return { type: "readOnly", networkAccess: false };
+  return {
+    type: "workspaceWrite",
+    writableRoots: [path.resolve(worktreePath)],
+    networkAccess: config.sandbox_workspace_write.network_access,
+    excludeTmpdirEnvVar: false,
+    excludeSlashTmp: false,
+  };
+}
+
+function approvalPolicy(config: MainCodexAgentConfig): "never" | "onRequest" {
+  return config.approval_policy === "never" ? "never" : "onRequest";
+}
+
+function appServerSandbox(config: MainCodexAgentConfig): "dangerFullAccess" | "readOnly" | "workspaceWrite" {
+  if (config.sandbox_mode === "danger-full-access") return "dangerFullAccess";
+  return config.sandbox_mode === "read-only" ? "readOnly" : "workspaceWrite";
+}
+
+function mappedStatus(value: unknown): unknown {
+  return value === "inProgress" ? "in_progress" : value;
+}
+
+function textContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.flatMap((entry) => typeof entry === "string" ? [entry] : []).join("\n");
+  return "";
+}
+
+/** Keep the existing Run Inspector contract while app-server becomes the transport. */
+function mapAppServerItem(item: unknown): unknown {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+  const source = item as Record<string, unknown>;
+  const common = { ...source, status: mappedStatus(source.status) };
+  switch (source.type) {
+    case "agentMessage": return { ...common, type: "agent_message" };
+    case "reasoning": return { ...common, type: "reasoning", text: textContent(source.summary) || textContent(source.content) };
+    case "commandExecution": return { ...common, type: "command_execution", aggregated_output: source.aggregatedOutput,
+      exit_code: source.exitCode };
+    case "fileChange": return { ...common, type: "file_change" };
+    case "mcpToolCall": return { ...common, type: "mcp_tool_call" };
+    case "webSearch": return { ...common, type: "web_search" };
+    case "collabToolCall": return { ...common, type: "collab_tool_call", sender_thread_id: source.senderThreadId,
+      receiver_thread_id: source.receiverThreadId, new_thread_id: source.newThreadId };
+    default: return common;
+  }
+}
+
+async function gitReadOnlyRoots(worktreePath: string): Promise<string[]> {
+  const dotGit = path.join(worktreePath, ".git");
+  try {
+    const info = await fs.stat(dotGit);
+    if (info.isDirectory()) return [await fs.realpath(dotGit)];
+    if (!info.isFile()) return [];
+    const pointer = await fs.readFile(dotGit, "utf8");
+    const match = pointer.match(/^gitdir:\s*(.+)\s*$/m);
+    if (!match) return [];
+    const gitDirectory = await fs.realpath(path.resolve(worktreePath, match[1]));
+    try {
+      const common = (await fs.readFile(path.join(gitDirectory, "commondir"), "utf8")).trim();
+      return [await fs.realpath(path.resolve(gitDirectory, common))];
+    } catch {
+      return [gitDirectory];
+    }
+  } catch {
+    return [];
+  }
 }
 
 interface WindowsProcess { ProcessId: number; ParentProcessId: number; Started: string }
@@ -335,7 +433,15 @@ export async function runCodex(
       throw new Error("The runtime output schema must be outside the run worktree.");
     }
   }
-  const args = buildCodexExecArgs(options.config, options.worktreePath, options.outputSchemaPath);
+  const readableRoots = [
+    ...(await gitReadOnlyRoots(options.worktreePath)),
+    ...(options.pythonRuntime?.readableRoots ?? []),
+  ];
+  const permissionProfile = options.pythonRuntime?.readableRoots.length
+    ? buildCodexPermissionProfile(options.config, readableRoots)
+    : null;
+  const sandboxPolicy = buildCodexSandboxPolicy(options.config, options.worktreePath);
+  const args = buildCodexAppServerArgs(options.config, permissionProfile);
   // Git invoked by the agent must resolve its worktree from cwd, never an inherited checkout/index.
   const env = options.pythonRuntime ? withPythonRuntimeEnvironment(runGitEnvironment(), options.pythonRuntime) : runGitEnvironment();
   return new Promise((resolve) => {
@@ -351,8 +457,11 @@ export async function runCodex(
     let termination: Promise<void> | undefined;
     let finishing = false;
     let sinkFailed = false;
-    let lineBuffer = "";
-    const stdoutDecoder = new StringDecoder("utf8");
+    let threadId: string | null = null;
+    let turnId: string | null = null;
+    let turnFinished = false;
+    const items = new Map<string, Record<string, unknown>>();
+    const stdoutLines = createInterface({ input: child.stdout });
     const stderrDecoder = new StringDecoder("utf8");
     const emit = (event: CodexRunEvent) => {
       if (sinkFailed) return;
@@ -369,6 +478,11 @@ export async function runCodex(
       if (reason === "cancelled") result.cancelled = true;
       if (reason === "timeout") result.timedOut = true;
       result.terminationVerified = false;
+      if (threadId && turnId && child.stdin.writable) {
+        try {
+          child.stdin.write(`${JSON.stringify({ method: "turn/interrupt", id: 99, params: { threadId, turnId } })}\n`);
+        } catch { /* Process-tree termination remains authoritative. */ }
+      }
       // Schedule before emitting to avoid reentrancy if the sink throws.
       termination = Promise.resolve().then(async () => {
         emit({ type: "termination", reason, phase: "graceful" });
@@ -385,57 +499,160 @@ export async function runCodex(
         child.kill();
       });
     };
-    const parseLine = (line: string) => {
-      if (!line.trim()) return;
-      let event: unknown;
-      try { event = JSON.parse(line); } catch { return; } // Raw non-JSON output is still persisted.
+    const send = (message: unknown) => {
+      if (!child.stdin.writable || termination) return;
+      child.stdin.write(`${JSON.stringify(message)}\n`);
+    };
+    const mappedEvent = (type: string, item?: unknown, extra?: Record<string, unknown>) => {
+      const event = { type, ...(item === undefined ? {} : { item: mapAppServerItem(item) }), ...(extra ?? {}) };
       emit({ type: "codex", event });
-      if (!event || typeof event !== "object") return;
-      const value = event as { type?: string; item?: { type?: string; text?: string }; error?: { message?: string }; message?: string };
-      if (value.type === "item.completed" && value.item?.type === "agent_message" && typeof value.item.text === "string") {
-        result.lastAgentMessage = value.item.text;
-      }
-      if (value.type === "turn.failed" || value.type === "error") {
-        result.error = value.error?.message ?? value.message ?? "Codex reported an execution error.";
+      return event;
+    };
+    const respondToServerRequest = (message: { id: number; method: string }) => {
+      if (message.method === "item/commandExecution/requestApproval" || message.method === "item/fileChange/requestApproval") {
+        result.error ??= "Codex requested interactive approval, which AgentTasker cannot grant during a non-interactive Run.";
+        send({ id: message.id, result: { decision: "decline" } });
+      } else if (message.method === "item/permissions/requestApproval") {
+        send({ id: message.id, result: { permissions: [], scope: "turn" } });
+      } else if (message.method === "mcpServer/elicitation/request") {
+        send({ id: message.id, result: { action: "decline", content: null } });
+      } else {
+        send({ id: message.id, error: { code: -32601, message: "AgentTasker does not provide this interactive capability." } });
       }
     };
-    const stdout = (text: string) => {
-      if (!text) return;
-      emit({ type: "stdout", text });
-      lineBuffer += text;
-      let newline: number;
-      while ((newline = lineBuffer.indexOf("\n")) !== -1) {
-        const line = lineBuffer.slice(0, newline);
-        lineBuffer = lineBuffer.slice(newline + 1);
-        if (line.length > MAX_EVENT_LINE) {
-          result.error = "Codex emitted an oversized JSON event.";
-          stop("error");
-        } else parseLine(line);
-      }
-      if (lineBuffer.length > MAX_EVENT_LINE) {
-        lineBuffer = "";
-        result.error = "Codex emitted an oversized unterminated event.";
+    const parseLine = (line: string) => {
+      if (!line.trim()) return;
+      if (line.length > MAX_EVENT_LINE) {
+        result.error = "Codex app-server emitted an oversized JSON message.";
         stop("error");
+        return;
+      }
+      emit({ type: "stdout", text: `${line}\n` });
+      let parsed: unknown;
+      try { parsed = JSON.parse(line); } catch { return; }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      const message = parsed as { id?: number; method?: string; params?: Record<string, unknown>;
+        result?: Record<string, unknown>; error?: { message?: string } };
+      if (typeof message.id === "number" && typeof message.method === "string") {
+        respondToServerRequest({ id: message.id, method: message.method });
+        return;
+      }
+      if (message.error?.message) {
+        result.error = message.error.message;
+        stop("error");
+        return;
+      }
+      if (message.id === 1) {
+        send({ method: "initialized", params: {} });
+        send({ method: "thread/start", id: 2, params: {
+          ...(options.config.model ? { model: options.config.model } : {}),
+          cwd: options.worktreePath,
+          approvalPolicy: approvalPolicy(options.config),
+          ...(permissionProfile ? { permissions: permissionProfile.id } : { sandbox: appServerSandbox(options.config) }),
+          runtimeWorkspaceRoots: [options.worktreePath],
+          serviceName: "agenttasker",
+        } });
+        return;
+      }
+      if (message.id === 2) {
+        const thread = message.result?.thread as { id?: unknown } | undefined;
+        if (typeof thread?.id !== "string") {
+          result.error = "Codex app-server did not return a thread ID.";
+          stop("error");
+          return;
+        }
+        threadId = thread.id;
+        send({ method: "turn/start", id: 3, params: {
+          threadId,
+          input: [{ type: "text", text: options.prompt }],
+          cwd: options.worktreePath,
+          approvalPolicy: approvalPolicy(options.config),
+          ...(permissionProfile ? { permissions: permissionProfile.id } : { sandboxPolicy }),
+          runtimeWorkspaceRoots: [options.worktreePath],
+          ...(options.config.model ? { model: options.config.model } : {}),
+          effort: options.config.model_reasoning_effort,
+          summary: options.config.model_reasoning_summary,
+          outputSchema: CODEX_RUN_OUTPUT_SCHEMA,
+        } });
+        return;
+      }
+      if (message.id === 3) {
+        const turn = message.result?.turn as { id?: unknown } | undefined;
+        if (typeof turn?.id === "string") turnId = turn.id;
+        return;
+      }
+      if (!message.method) return;
+      const params = message.params ?? {};
+      if (message.method === "thread/started") {
+        const thread = params.thread as { id?: unknown } | undefined;
+        mappedEvent("thread.started", undefined, { thread_id: typeof thread?.id === "string" ? thread.id : threadId });
+      } else if (message.method === "turn/started") {
+        const turn = params.turn as { id?: unknown } | undefined;
+        if (typeof turn?.id === "string") turnId = turn.id;
+        mappedEvent("turn.started");
+      } else if (message.method === "item/started" || message.method === "item/completed") {
+        const item = params.item;
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const record = item as Record<string, unknown>;
+          if (typeof record.id === "string") items.set(record.id, record);
+          if (message.method === "item/completed" && record.type === "agentMessage" && typeof record.text === "string" && record.phase !== "commentary") {
+            result.lastAgentMessage = record.text;
+          }
+        }
+        mappedEvent(message.method === "item/started" ? "item.started" : "item.completed", item);
+      } else if (message.method === "item/commandExecution/outputDelta") {
+        const itemId = typeof params.itemId === "string" ? params.itemId : null;
+        const delta = typeof params.delta === "string" ? params.delta : "";
+        const current = itemId ? items.get(itemId) : undefined;
+        if (itemId && current) {
+          const updated = { ...current, aggregatedOutput: `${typeof current.aggregatedOutput === "string" ? current.aggregatedOutput : ""}${delta}` };
+          items.set(itemId, updated);
+          mappedEvent("item.updated", updated);
+        }
+      } else if (message.method === "turn/completed") {
+        const turn = params.turn as { status?: unknown; error?: { message?: unknown }; usage?: unknown } | undefined;
+        turnFinished = true;
+        if (turn?.status === "failed") {
+          const detail = typeof turn.error?.message === "string" ? turn.error.message : "Codex turn failed.";
+          result.error ??= detail;
+          mappedEvent("turn.failed", undefined, { error: { message: detail } });
+        } else {
+          mappedEvent("turn.completed", undefined, { usage: turn?.usage });
+          if (turn?.status === "interrupted" && !result.cancelled && !result.timedOut) result.error ??= "Codex turn was interrupted.";
+        }
+        child.stdin.end();
+      } else if (message.method === "error") {
+        const error = params.error as { message?: unknown } | undefined;
+        const detail = typeof error?.message === "string" ? error.message : "Codex reported an execution error.";
+        result.error ??= detail;
+        mappedEvent("error", undefined, { message: detail });
+      } else {
+        mappedEvent(message.method, undefined, params);
       }
     };
     const abort = () => stop("cancelled");
     const timer = setTimeout(() => stop("timeout"), options.timeoutMs);
     options.signal?.addEventListener("abort", abort, { once: true });
-    child.stdout.on("data", (chunk: Buffer) => stdout(stdoutDecoder.write(chunk)));
+    stdoutLines.on("line", parseLine);
     child.stderr.on("data", (chunk: Buffer) => {
       const text = stderrDecoder.write(chunk);
       if (text) emit({ type: "stderr", text });
     });
     child.stdin.on("error", (error) => {
-      result.error = `Could not send the full prompt to Codex: ${error.message}`;
-      stop("error");
+      if (!finishing && !turnFinished) {
+        result.error = `Could not communicate with Codex app-server: ${error.message}`;
+        stop("error");
+      }
     });
     child.on("spawn", () => {
       result.pid = child.pid ?? null;
       result.terminationVerified = false;
       if (child.pid) emit({ type: "started", pid: child.pid });
       if (options.signal?.aborted) stop("cancelled");
-      if (!termination) child.stdin.end(options.prompt, "utf8");
+      if (!termination) send({ method: "initialize", id: 1, params: {
+        clientInfo: { name: "agenttasker", title: "AgentTasker", version: "0.1.0" },
+        capabilities: { experimentalApi: true },
+      } });
       else child.stdin.end();
     });
     child.on("error", (error) => {
@@ -446,10 +663,9 @@ export async function runCodex(
       finishing = true;
       clearTimeout(timer);
       options.signal?.removeEventListener("abort", abort);
-      stdout(stdoutDecoder.end());
+      stdoutLines.close();
       const tail = stderrDecoder.end();
       if (tail) emit({ type: "stderr", text: tail });
-      if (lineBuffer) parseLine(lineBuffer);
       result.exitCode = exitCode;
       result.signal = signal;
       await termination;
@@ -473,7 +689,9 @@ export async function runCodex(
         result.error ??= "Codex did not return a valid structured task result.";
       }
       if (exitCode !== 0 && !result.error && !result.cancelled && !result.timedOut) {
-        result.error = `Codex exited with ${signal ? `signal ${signal}` : `code ${exitCode ?? "unknown"}`}.`;
+        result.error = `Codex app-server exited with ${signal ? `signal ${signal}` : `code ${exitCode ?? "unknown"}`}.`;
+      } else if (!turnFinished && !result.error && !result.cancelled && !result.timedOut) {
+        result.error = "Codex app-server exited before the turn completed.";
       }
       resolve(result);
     });

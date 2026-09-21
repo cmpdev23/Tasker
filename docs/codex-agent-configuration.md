@@ -98,6 +98,9 @@ optionnelles; lorsqu'elles sont absentes, Codex applique ses règles d'héritage
 
 Les fichiers restent sous `.tasker/agents/` parce qu'ils sont la configuration
 portable d'AgentTasker. Le runner V1 fournit les paramètres de `main.toml` à
-`codex exec` via des surcharges natives `-c`; il ne copie pas les fichiers de
-sous-agents personnalisés dans le worktree. Leur orchestration reste une étape
-ultérieure. Voir [l’architecture du runner](task-runner-architecture.md).
+`codex app-server` via des champs de thread/tour et des surcharges natives `-c` pour
+les réglages sans équivalent protocolaire. Il ne copie pas les fichiers de
+sous-agents personnalisés dans le worktree. Un profil de permissions éphémère peut
+ajouter les racines locales Python/Git en lecture seule sans modifier la configuration
+Codex de l’utilisateur. Leur orchestration reste une étape ultérieure. Voir
+[l’architecture du runner](task-runner-architecture.md).

@@ -152,11 +152,14 @@ function executableStatus(manager: PackageManager): ExecutableStatus {
   }
 }
 
-export function projectExecutionRuntimeStatus(settings: ProjectExecutionSettings): ProjectExecutionRuntimeStatus {
+export function projectExecutionRuntimeStatus(
+  settings: ProjectExecutionSettings,
+  localPythonExecutable: string | null = null,
+): ProjectExecutionRuntimeStatus {
   return {
     node: { available: true, executable: process.execPath, detail: process.version },
     packageManager: executableStatus(settings.packageManager),
-    python: detectPythonRuntime(settings.pythonMinVersion),
+    python: detectPythonRuntime(settings.pythonMinVersion, undefined, localPythonExecutable),
   };
 }
 

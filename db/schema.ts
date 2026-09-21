@@ -19,6 +19,16 @@ export const projects = sqliteTable("projects", {
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 
+export const projectRuntimePreferences = sqliteTable("project_runtime_preferences", {
+  projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  pythonExecutable: text("python_executable"),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+});
+
+export type ProjectRuntimePreference = typeof projectRuntimePreferences.$inferSelect;
+
 export const runs = sqliteTable("runs", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),

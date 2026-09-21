@@ -47,6 +47,30 @@ persistent local Node.js server, Git with a configured commit identity, and an
 authenticated Codex CLI. SQLite migrations run automatically. See `.env.example`
 for optional local paths.
 
+### Python availability
+
+Python is optional for AgentTasker itself, but it must be available when a Task,
+Sequence, project script, or validation command needs it. On Windows, the
+recommended setup is a **system-wide Python installation available to all local
+users**. Codex normally executes commands through a restricted sandbox account;
+a per-user installation under `AppData` may therefore be detected by AgentTasker
+but still be denied by Windows when Codex tries to start it.
+
+For each project that uses Python:
+
+1. Open **Project → Settings → Execution**.
+2. Set the optional minimum Python version when the project requires one.
+3. Keep **Auto-detect** or choose **Specific local interpreter**, then select the
+   system-wide `python.exe`.
+4. Confirm that **Runtime preflight** reports Python as executable inside the
+   Codex sandbox before starting Runs.
+
+The selected executable path is machine-local and stored only in AgentTasker's
+SQLite database; it is never written to `.tasker/project.toml` or committed to
+Git. AgentTasker does not silently switch to `danger-full-access` when Python is
+blocked. See [Python runtime architecture](docs/python-runtime-architecture.md)
+for detection, sandbox permissions, diagnostics, and Windows limitations.
+
 After linking, open any Git repository and run `agenttasker init`. The current
 repository is initialized and queued for registration in the local application;
 AgentTasker is not added to that repository's package dependencies.
@@ -264,7 +288,9 @@ installation, ordered `package.json` validation scripts, separate Run,
 installation, and validation timeouts, plus an optional portable Python minimum
 version. These settings are stored under `[execution]` in `.tasker/project.toml`;
 executable paths remain local to the machine and are reported by the Settings and
-Run preflight.
+Run preflight. When Python is required, install it system-wide where possible,
+select or verify it under **Settings → Execution**, and confirm that the sandbox
+preflight succeeds before running Tasks or Sequences.
 
 ## 6. Instructions and Knowledge
 

@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { runCodex, buildCodexExecArgs, CODEX_RUN_OUTPUT_SCHEMA, type CodexRunEvent } from "../backend/codex/codex-runner";
+import { runCodex, buildCodexAppServerArgs, buildCodexPermissionProfile, buildCodexSandboxPolicy, CODEX_RUN_OUTPUT_SCHEMA, type CodexRunEvent } from "../backend/codex/codex-runner";
+import { probePythonSandbox } from "../backend/codex/codex-sandbox-preflight";
 import type { MainCodexAgentConfig } from "../src/types/codex-agents";
+import type { PythonRuntimeStatus } from "../src/types/project-execution";
 
 const config: MainCodexAgentConfig = {
   model: 'chosen-model-with-"quote', model_reasoning_effort: "high", model_reasoning_summary: "auto",
@@ -35,30 +37,61 @@ async function stub(root: string, body: string) {
   return { executable: process.execPath, prefixArgs: [file] };
 }
 
-test("argv honors main configuration without approval or sandbox shortcuts", () => {
-  const args = buildCodexExecArgs(config, path.resolve("worktree"));
-  assert.ok(args.includes('approval_policy="on-request"'));
-  assert.ok(args.includes('sandbox_mode="read-only"'));
-  assert.ok(args.includes("sandbox_workspace_write.network_access=false"));
-  assert.ok(args.includes(`model=${JSON.stringify(config.model)}`));
+test("app-server argv and per-turn sandbox honor configuration without bypass shortcuts", () => {
+  const args = buildCodexAppServerArgs(config);
+  assert.equal(args[0], "app-server");
   assert.ok(args.includes("agents.enabled=false"));
   assert.ok(!args.some(arg => /bypass|full-auto|approve-for-me/.test(arg)));
-  assert.equal(args.at(-1), "-");
+  assert.deepEqual(buildCodexSandboxPolicy(config, path.resolve("worktree")), { type: "readOnly", networkAccess: false });
+  const profile = buildCodexPermissionProfile(config, [path.resolve("python")]);
+  assert.equal(profile?.id, "agenttasker-run");
+  assert.ok(profile?.configOverrides.some((value) => value.includes(JSON.stringify(path.resolve("python")))));
+});
+
+test("Python preflight executes the selected interpreter through the read-only permission profile", async t => {
+  const { root, worktree } = await fixture(t);
+  const launch = await stub(root, `
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'command/exec') {
+        if (message.params.permissionProfile !== 'agenttasker-run') process.exit(4);
+        send({id:2,result:{exitCode:0,stdout:JSON.stringify({executable:'C:\\\\Python\\\\python.exe',version:'3.12.3'}),stderr:''}});
+      }
+    });`);
+  const runtime: PythonRuntimeStatus = {
+    available: true, executable: path.join(root, "python.exe"), detail: "Python 3.12.3", minimumVersion: "3.11",
+    version: "3.12.3", prefix: root, basePrefix: root, source: "explicit", readableRoots: [root], candidates: [],
+    attempts: ["configured interpreter"], sandbox: { checked: false, available: false, detail: "Not checked" },
+  };
+  const result = await probePythonSandbox(runtime, worktree, config, launch);
+  assert.deepEqual(result, { checked: true, available: true,
+    detail: "Python 3.12.3 is executable inside the Codex sandbox with read-only runtime access." });
 });
 
 test("stdin remains private and stdout, stderr, UTF-8 JSON, final structured result are captured", async t => {
   const { root, worktree, schema } = await fixture(t);
   const launch = await stub(root, `
-    let prompt = ''; process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => prompt += chunk);
-    process.stdin.on('end', () => {
-      if (prompt !== 'private prompt é' || process.argv.includes(prompt)) process.exit(3);
-      process.stderr.write('diagnostic');
-      process.stdout.write('non JSON diagnostic\\n');
-      const result = {status:'SUCCESS',summary:'terminé',blocking_error:null};
-      const bytes = Buffer.from(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify(result)}}));
-      for (const byte of bytes) process.stdout.write(Buffer.from([byte]));
-    });`);
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        const prompt = message.params.input[0].text;
+        if (prompt !== 'private prompt é' || process.argv.includes(prompt)) process.exit(3);
+        process.stderr.write('diagnostic');
+        send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+        send({method:'turn/started',params:{turn:{id:'turn-1'}}});
+        const result = {status:'SUCCESS',summary:'terminé',blocking_error:null};
+        send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',text:JSON.stringify(result)}}});
+        send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
+      }
+    });
+    process.stdin.on('end', () => process.exit(0));`);
   const events: CodexRunEvent[] = [];
   const result = await runCodex({ worktreePath: worktree, prompt: "private prompt é", config,
     timeoutMs: 10000, outputSchemaPath: schema, onEvent: event => events.push(event) }, launch);
@@ -76,7 +109,20 @@ test("semantic failure and invalid final outputs fail despite exit zero", async 
   const { root, worktree, schema } = await fixture(t);
   for (const final of [JSON.stringify({ status: "FAILURE", summary: "blocked", blocking_error: "No access" }),
     JSON.stringify({ status: "SUCCESS", summary: "done", blocking_error: "Validation blocked" }), "all done"]) {
-    const launch = await stub(root, `process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:${JSON.stringify(final)}}})));`);
+    const launch = await stub(root, `
+      const rl = require('node:readline').createInterface({input:process.stdin});
+      const send = value => console.log(JSON.stringify(value));
+      rl.on('line', line => {
+        const message = JSON.parse(line);
+        if (message.id === 1) send({id:1,result:{}});
+        if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+        if (message.method === 'turn/start') {
+          send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+          send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',text:${JSON.stringify(final)}}}});
+          send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
+        }
+      });
+      process.stdin.on('end', () => process.exit(0));`);
     const result = await runCodex({ worktreePath: worktree, prompt: "test", config, timeoutMs: 10000, outputSchemaPath: schema }, launch);
     assert.equal(result.exitCode, 0);
     assert.ok(result.error);
@@ -100,8 +146,10 @@ for (const kind of ["cancelled", "timeout"]) {
     const launch = await stub(root, `
       const {spawn} = require('node:child_process');
       const child = spawn(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setInterval(()=>{},1000)"], {stdio:'ignore',windowsHide:true});
-      process.stdout.write(JSON.stringify({type:'test-child',pid:child.pid})+'\\n');
-      process.on('SIGTERM',()=>{}); process.stdin.resume(); setInterval(()=>{},1000);`);
+      process.stdout.write(JSON.stringify({method:'test-child',params:{pid:child.pid}})+'\\n');
+      const rl = require('node:readline').createInterface({input:process.stdin});
+      rl.on('line', line => { const message = JSON.parse(line); if (message.id === 1) console.log(JSON.stringify({id:1,result:{}})); });
+      process.on('SIGTERM',()=>{}); setInterval(()=>{},1000);`);
     const controller = new AbortController();
     const events: CodexRunEvent[] = [];
     let descendant: number | undefined;
@@ -139,17 +187,25 @@ test("exit zero with a surviving detached background child fails termination ver
   `;
   const launch = await stub(root, `
     const {spawn} = require('node:child_process');
-    process.stdin.resume();
-    process.stdin.on('end', () => {
-      const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], {
-        stdio:'ignore', windowsHide:true,
-        // POSIX children remain in the dedicated Codex group; Windows detachment is explicit.
-        detached:process.platform === 'win32'
-      });
-      child.unref();
-      console.log(JSON.stringify({type:'test-child',pid:child.pid}));
-      console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:JSON.stringify({status:'SUCCESS',summary:'done',blocking_error:null})}}));
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => console.log(JSON.stringify(value));
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], {
+          stdio:'ignore', windowsHide:true,
+          detached:process.platform === 'win32'
+        });
+        child.unref();
+        send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+        send({method:'test-child',params:{pid:child.pid}});
+        send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',text:JSON.stringify({status:'SUCCESS',summary:'done',blocking_error:null})}}});
+        send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
+      }
     });
+    process.stdin.on('end', () => process.exit(0));
   `);
   const events: CodexRunEvent[] = [];
   let childPid: number | undefined;

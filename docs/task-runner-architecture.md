@@ -4,7 +4,7 @@
 
 AgentTasker possède une interface locale Next.js, des projets enregistrés dans
 SQLite et une configuration versionnée `.tasker/`. La V1 relie maintenant ces
-éléments à une véritable exécution `codex exec`, dans un worktree isolé.
+éléments à une véritable exécution Codex App Server, dans un worktree isolé.
 
 ## Problème précis
 
@@ -122,9 +122,12 @@ Le chemin de la base reste contrôlé par `DATABASE_PATH`, avec le défaut histo
 ## Codex et prompt
 
 Le prompt combine explicitement les instructions de projet, celles de la tâche et
-les contraintes d’isolation/finalisation. Il passe sur stdin à `codex exec --json` ;
-il n’est jamais interpolé dans une commande shell ni enregistré comme définition
-dans SQLite. Le processus est lancé avec `shell: false` et le worktree comme cwd.
+les contraintes d’isolation/finalisation. Il passe comme entrée structurée au
+protocole JSON-RPC de `codex app-server`; il n’est jamais interpolé dans une commande
+shell ni enregistré comme définition dans SQLite. Le processus est lancé avec
+`shell: false` et le worktree comme cwd. Les notifications App Server sont adaptées
+au contrat d’événements historique du Run Inspector afin de conserver la lecture
+des anciens Runs et les renderers existants.
 
 Les paramètres `model`, reasoning, summary, verbosity, sandbox, approval, réseau et
 options `agents` exposées par Agents sont fournis comme réglages natifs. Aucun modèle
@@ -268,6 +271,24 @@ installation Python et le launcher Windows reste utilisable. Les chemins absolus
 ne sont jamais écrits dans `.tasker/project.toml`; ils restent des diagnostics
 locaux du Run. Les overrides de Python par Task ou SequenceStep ne font pas partie
 du schéma V1.
+
+L’interface offre en plus un override local facultatif vers un interpréteur précis.
+Ce chemin est validé, résolu avec `realpath` et stocké dans la table SQLite
+`project_runtime_preferences`; le mode automatique reste le défaut. Le préflight
+des Settings exécute le runtime une première fois sous le worker puis via
+`command/exec` dans le sandbox Codex. Un échec distingue donc l’absence de Python
+d’un refus ACL/sandbox. Sous Windows, une installation privée sous `AppData` peut
+rester inexécutable par le compte restreint malgré le droit de lecture déclaré;
+l’interface recommande alors une installation Python système lisible plutôt qu’un
+basculement implicite en `danger-full-access`.
+
+Lorsqu’un runtime Python est retenu, App Server reçoit un profil de permissions
+éphémère dérivé de `:workspace` ou `:read-only`. Le worktree reste la seule racine
+modifiable; `sys.prefix`, `sys.base_prefix` et le répertoire Git commun du worktree
+reçoivent seulement un accès en lecture. AgentTasker ne transmet jamais le profil
+utilisateur complet, n’utilise pas `--add-dir` pour rendre Python modifiable et ne
+bascule pas en `danger-full-access`. `PYTHONDONTWRITEBYTECODE=1` évite les écritures
+de cache dans l’installation en lecture seule.
 
 L’incident du 11 septembre 2026 (Run `b87c5b31…62af`) a confirmé ce besoin : Codex
 avait créé l’article et sa couverture, puis `npm run build` héritait du mode

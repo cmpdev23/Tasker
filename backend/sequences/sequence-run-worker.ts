@@ -30,6 +30,7 @@ import { runRepository } from "../runs/run.repository";
 import { sequenceRunRepository } from "./sequence-run.repository";
 import { sequenceService } from "./sequence.service";
 import { publishRunWorktree } from "../git/run-publication.service";
+import { projectRuntimePreferenceService } from "../runs/project-runtime-preference.service";
 
 function readProjectFile(repo: string, relative: string): string {
   const file = path.join(repo, relative);
@@ -133,7 +134,8 @@ export async function executeSequenceRun(
     sequenceRunRepository.initialize(run.id, sequence);
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
-    const executionRuntime = projectExecutionRuntimeStatus(executionSettings);
+    const localRuntime = await projectRuntimePreferenceService.get(run.projectId);
+    const executionRuntime = projectExecutionRuntimeStatus(executionSettings, localRuntime.pythonExecutable);
     pythonRuntime = executionRuntime.python;
     event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
     assertProjectExecutionRuntime(executionSettings, pythonRuntime);
@@ -159,6 +161,7 @@ export async function executeSequenceRun(
         codex: main,
         execution: executionSettings,
         python: pythonRuntime,
+        localExecution: localRuntime,
         git: gitSettings,
         timeoutMs,
         sequence: {

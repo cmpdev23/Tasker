@@ -65,19 +65,29 @@ test("Git and agent subprocesses cannot inherit routing to the user's checkout o
   await fs.writeFile(script, `
     const fs = require('node:fs');
     const { execFileSync } = require('node:child_process');
-    process.stdin.resume();
-    process.stdin.on('end', () => {
-      const expected = ${JSON.stringify(preserved)};
-      for (const [key, value] of Object.entries(expected)) {
-        if (process.env[key] !== value) throw new Error('Expected test variable to be preserved: ' + key);
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => console.log(JSON.stringify(value));
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        const expected = ${JSON.stringify(preserved)};
+        for (const [key, value] of Object.entries(expected)) {
+          if (process.env[key] !== value) throw new Error('Expected test variable to be preserved: ' + key);
+        }
+        if (process.env.PYTHON !== ${JSON.stringify(pythonExecutable)}) throw new Error('Resolved Python executable was not inherited');
+        if (!process.env.PATH.split(${JSON.stringify(path.delimiter)})[0].startsWith(${JSON.stringify(root)})) {
+          throw new Error('Resolved Python directory was not first on PATH');
+        }
+        fs.writeFileSync('tracked.txt', 'run changes\\n');
+        execFileSync('git', ['add', '--', 'tracked.txt'], { stdio: 'pipe', windowsHide: true });
+        send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+        send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',text:JSON.stringify({status:'SUCCESS',summary:'done',blocking_error:null})}}});
+        send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
       }
-      if (process.env.PYTHON !== ${JSON.stringify(pythonExecutable)}) throw new Error('Resolved Python executable was not inherited');
-      if (!process.env.PATH.split(${JSON.stringify(path.delimiter)})[0].startsWith(${JSON.stringify(root)})) {
-        throw new Error('Resolved Python directory was not first on PATH');
-      }
-      fs.writeFileSync('tracked.txt', 'run changes\\n');
-      execFileSync('git', ['add', '--', 'tracked.txt'], { stdio: 'pipe', windowsHide: true });
     });
+    process.stdin.on('end', () => process.exit(0));
   `);
   const routing = {
     GIT_DIR: path.join(repo, ".git"), GIT_WORK_TREE: repo,
@@ -105,7 +115,8 @@ test("Git and agent subprocesses cannot inherit routing to the user's checkout o
     // Use the production spawn path and a real Git mutation in its child process, without calling a model.
     const result = await runCodex({ worktreePath: worktree, prompt: "Stage the fixture change.", config, timeoutMs: 10_000,
       pythonRuntime: { available: true, executable: pythonExecutable, detail: "Python 3.11.9", minimumVersion: "3.11",
-        version: "3.11.9", candidates: [], attempts: [] } },
+        version: "3.11.9", prefix: root, basePrefix: root, source: "auto", readableRoots: [root],
+        candidates: [], attempts: [], sandbox: { checked: false, available: false, detail: "Not checked" } } },
       { executable: process.execPath, prefixArgs: [script] });
     assert.equal(result.exitCode, 0, result.error ?? undefined);
     assert.equal(result.error, null);

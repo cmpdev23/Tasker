@@ -2,19 +2,22 @@
 
 ## Situation actuelle
 
-AgentTasker lance Codex en mode non interactif avec `codex exec --json`. Le
-stdout est un flux JSON Lines, conservé sans perte dans `run_events` avec les
-événements propres au runner. Le Run Inspector transforme ce flux en activité
-lisible tout en gardant les données brutes accessibles pour le diagnostic.
+AgentTasker lance Codex en mode non interactif via `codex app-server`. Le stdout
+est un flux JSON-RPC JSON Lines, conservé dans `run_events` avec les événements
+propres au runner. Un adaptateur traduit les notifications `thread/*`, `turn/*` et
+`item/*` vers le contrat historique snake_case du Run Inspector. Celui-ci transforme
+le flux en activité lisible tout en gardant les messages bruts accessibles pour le
+diagnostic et demeure compatible avec les anciens Runs produits par `codex exec --json`.
 
 ## Problème précis
 
-Le protocole `exec --json` est volontairement technique et évolue avec Codex.
-Afficher directement ses enveloppes `item.started`, `item.updated` et
-`item.completed` oblige l’utilisateur à comprendre le JSON, duplique une même
-action plusieurs fois et rend les longues exécutions difficiles à parcourir.
-Les types publiés par le SDK TypeScript peuvent aussi accuser un retard sur le
-schéma Rust réellement émis, notamment pour les sous-agents.
+Le protocole JSON-RPC de `codex app-server` est volontairement technique et
+évolue avec Codex. Afficher directement ses notifications `item/started`,
+`item/completed` et ses deltas oblige l’utilisateur à comprendre le transport,
+duplique une même action plusieurs fois et rend les longues exécutions difficiles
+à parcourir. Les anciens Runs utilisent en plus le contrat JSONL de
+`codex exec --json`; l’interface doit comprendre les deux sans faire dépendre la
+persistance d’une version précise du protocole.
 
 ## Situation visée
 
@@ -24,9 +27,21 @@ et un fallback sûr pour tout événement futur. Les événements originaux rest
 consultables dans « Événements Codex bruts » et le moteur d’exécution ne dépend
 pas de l’interprétation UI.
 
-## Contrat officiel vérifié
+## Contrats officiels vérifiés
 
-Vérification effectuée le **10 septembre 2026** contre la documentation OpenAI,
+Le transport actif a été vérifié le **21 septembre 2026** contre la
+[documentation officielle de Codex App Server](https://developers.openai.com/codex/app-server/)
+et Codex CLI **0.155.0-alpha.9** installé sur la machine de test. AgentTasker
+initialise le serveur avec l’API expérimentale, crée un thread et un turn, puis
+adapte les notifications JSON-RPC camelCase au contrat interne historique. Les
+profils de permissions nommés utilisés pour exposer Python en lecture seule sont
+sélectionnés sur `thread/start` et `turn/start`; le préflight utilise
+`command/exec` avec le même profil.
+
+Le contrat historique ci-dessous reste nécessaire pour lire les anciens Runs et
+constitue le format normalisé actuellement consommé par le Run Inspector.
+
+Vérification historique effectuée le **10 septembre 2026** contre la documentation OpenAI,
 la branche `main` du dépôt officiel `openai/codex`, et Codex CLI **0.153.4**
 installé sur la machine de test.
 
@@ -189,9 +204,10 @@ s’appuyant sur des événements réellement observés.
 
 ## Sources officielles
 
-1. OpenAI, [Mode non interactif de Codex](https://learn.chatgpt.com/docs/non-interactive-mode#make-output-machine-readable), consulté le 10 septembre 2026.
-2. OpenAI, [`codex-rs/exec/src/exec_events.rs`](https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs), schéma Rust autoritaire de `exec --json`, consulté le 10 septembre 2026.
-3. OpenAI, [`sdk/typescript/src/events.ts`](https://github.com/openai/codex/blob/main/sdk/typescript/src/events.ts), types top-level du SDK, consulté le 10 septembre 2026.
-4. OpenAI, [`sdk/typescript/src/items.ts`](https://github.com/openai/codex/blob/main/sdk/typescript/src/items.ts), types d’items du SDK, consulté le 10 septembre 2026.
-5. OpenAI, [`event_processor_with_jsonl_output.rs`](https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs), conversion des notifications en JSONL, consulté le 10 septembre 2026.
-6. OpenAI, [`event_processor_with_json_output.rs`](https://github.com/openai/codex/blob/main/codex-rs/exec/tests/event_processor_with_json_output.rs), tests officiels des événements JSON, consulté le 10 septembre 2026.
+1. OpenAI, [Codex App Server](https://developers.openai.com/codex/app-server/), protocole JSON-RPC et permissions, consulté le 21 septembre 2026.
+2. OpenAI, [Mode non interactif de Codex](https://learn.chatgpt.com/docs/non-interactive-mode#make-output-machine-readable), consulté le 10 septembre 2026.
+3. OpenAI, [`codex-rs/exec/src/exec_events.rs`](https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs), schéma Rust autoritaire de `exec --json`, consulté le 10 septembre 2026.
+4. OpenAI, [`sdk/typescript/src/events.ts`](https://github.com/openai/codex/blob/main/sdk/typescript/src/events.ts), types top-level du SDK, consulté le 10 septembre 2026.
+5. OpenAI, [`sdk/typescript/src/items.ts`](https://github.com/openai/codex/blob/main/sdk/typescript/src/items.ts), types d’items du SDK, consulté le 10 septembre 2026.
+6. OpenAI, [`event_processor_with_jsonl_output.rs`](https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs), conversion des notifications en JSONL, consulté le 10 septembre 2026.
+7. OpenAI, [`event_processor_with_json_output.rs`](https://github.com/openai/codex/blob/main/codex-rs/exec/tests/event_processor_with_json_output.rs), tests officiels des événements JSON, consulté le 10 septembre 2026.

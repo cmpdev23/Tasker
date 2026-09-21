@@ -28,6 +28,7 @@ import {
 } from "./project-command-runner";
 import { executeSequenceRun } from "../sequences/sequence-run-worker";
 import { publishRunWorktree } from "../git/run-publication.service";
+import { projectRuntimePreferenceService } from "./project-runtime-preference.service";
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -113,7 +114,8 @@ async function executeTaskRun(
     const task = await taskService.get(run.projectId, run.taskId);
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
-    const executionRuntime = projectExecutionRuntimeStatus(executionSettings);
+    const localRuntime = await projectRuntimePreferenceService.get(run.projectId);
+    const executionRuntime = projectExecutionRuntimeStatus(executionSettings, localRuntime.pythonExecutable);
     pythonRuntime = executionRuntime.python;
     event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
     assertProjectExecutionRuntime(executionSettings, pythonRuntime);
@@ -132,7 +134,8 @@ async function executeTaskRun(
       .map((command) => `- ${command.executable} ${command.args.join(" ")}`).join("\n") || "- None configured";
     const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final Run status. Report a truthful result about the requested work and any other blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
     runRepository.update(run.id, { baseRemote: remote, baseBranch,
-      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, python: pythonRuntime, git: gitSettings,
+      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, python: pythonRuntime,
+        localExecution: localRuntime, git: gitSettings,
         timeoutMs, expectChanges: task.expectChanges }) });
     controller.signal.throwIfAborted();
     worktree = await prepareRunWorktree({ repoPath: project.repositoryPath,
