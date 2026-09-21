@@ -134,6 +134,7 @@ async function executeTaskRun(
       : "No project environment variables configured.");
     const executionRuntime = projectExecutionRuntimeStatus(executionSettings, localRuntime.pythonExecutable);
     pythonRuntime = executionRuntime.python;
+    event("runtime", `Node.js runtime: ${executionRuntime.node.detail}`, JSON.stringify(executionRuntime.node));
     event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
     assertProjectExecutionRuntime(executionSettings, pythonRuntime);
     const git = sectionContent(projectToml, "git");
@@ -151,7 +152,7 @@ async function executeTaskRun(
       .map((command) => `- ${command.executable} ${command.args.join(" ")}`).join("\n") || "- None configured";
     const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Task: ${task.name}\n\n${task.instructions}\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final Run status. Report a truthful result about the requested work and any other blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
     runRepository.update(run.id, { baseRemote: remote, baseBranch,
-      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, python: pythonRuntime,
+      resolvedConfig: JSON.stringify({ codex: main, execution: executionSettings, node: executionRuntime.node, python: pythonRuntime,
         localExecution: { ...localRuntime, environmentVariables: environmentVariableNames }, git: gitSettings,
         timeoutMs, expectChanges: task.expectChanges }) });
     controller.signal.throwIfAborted();

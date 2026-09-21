@@ -9,7 +9,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { errorMessage, isActiveRun, isRemovableRun, taskRequest } from "@/components/task-ui-utils";
 import { ActivityFeed } from "@/components/run-inspector/activity-feed";
-import { normalizeRunEvents } from "@/components/run-inspector/event-normalizer";
+import { isRelevantRunInspectorEvent, normalizeRunEvents } from "@/components/run-inspector/event-normalizer";
 import { changedFileCount } from "@/components/run-inspector/execution-config";
 import { ExecutionDetails } from "@/components/run-inspector/execution-details";
 import { RawEvents } from "@/components/run-inspector/raw-events";
@@ -22,15 +22,18 @@ import { SequenceProgress } from "@/components/run-inspector/sequence-progress";
 
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
 
-export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose, onRerun }: {
+export function TaskRunSheet({ projectId, initialRun, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
   projectId: string;
   initialRun: Run;
   rerunning?: boolean;
+  resuming?: boolean;
   onClose: () => void;
   onRerun?: () => void;
+  onResume?: () => void;
 }) {
   const [run, setRun] = useState(initialRun);
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const [suppressedEventCount, setSuppressedEventCount] = useState(0);
   const [sequenceSteps, setSequenceSteps] = useState<SequenceStepRun[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -57,6 +60,8 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
   const changedFiles = useMemo(() => changedFileCount(run.diff), [run.diff]);
   const commands = useMemo(() => projectCommandActivities(events, run), [events, run]);
   const failedCommand = commands.find(command => command.status === "failed" || command.status === "timed-out");
+  const canResumeValidation = run.kind === "SEQUENCE" && run.status === "FAILED" && run.terminationVerified &&
+    Boolean(failedCommand) && sequenceSteps.some((step) => step.status === "FAILED" && step.exitCode === 0);
 
   useEffect(() => {
     if (!isActiveRun(run.status)) return;
@@ -78,9 +83,11 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
         if (Array.isArray(data.sequenceSteps)) setSequenceSteps(data.sequenceSteps);
         if (data.queue) setQueue(data.queue);
         if (data.run.cancelRequested) setCancelRequested(true);
+        const relevantEvents = data.events.filter(isRelevantRunInspectorEvent);
+        setSuppressedEventCount((current) => current + data.events.length - relevantEvents.length);
         setEvents((current) => {
           const merged = new Map(current.map((event) => [event.id, event]));
-          for (const event of data.events) merged.set(event.id, event);
+          for (const event of relevantEvents) merged.set(event.id, event);
           return [...merged.values()].sort((a, b) => a.id - b.id);
         });
         for (const event of data.events) cursor = Math.max(cursor, event.id);
@@ -211,10 +218,12 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
           cancelRequested={cancelRequested}
           deleting={deleting}
           rerunning={rerunning}
+          resuming={resuming}
           savingLogs={savingLogs}
           onCancel={cancel}
           onDelete={isRemovableRun(run) ? () => void removeRun() : undefined}
           onRerun={onRerun}
+          onResume={canResumeValidation ? onResume : undefined}
           onSaveLogs={saveLogs}
         />
         {run.status === "QUEUED" && queue && (
@@ -270,7 +279,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, onClose
             <ExecutionDetails run={run} />
             <ActivityFeed activities={activities} loading={loading} active={isActiveRun(run.status)} follow={follow} onFollowChange={setFollow} />
             <div ref={activityEnd} aria-hidden />
-            <RawEvents events={events} />
+            <RawEvents events={events} suppressedCount={suppressedEventCount} />
           </div>
         </main>
       </SheetContent>

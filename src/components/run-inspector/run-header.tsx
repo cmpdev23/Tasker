@@ -1,5 +1,5 @@
 import type { Run } from "@db/schema";
-import { ExternalLinkIcon, FileTextIcon, Loader2Icon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { ExternalLinkIcon, FileTextIcon, Loader2Icon, PlayIcon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
@@ -7,7 +7,7 @@ import { displayModel, resolvedExecutionConfig } from "./execution-config";
 import { formatRunElapsed, shortId } from "./format";
 import { RunStatusBadge } from "./run-status-badge";
 
-export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, savingLogs, onCancel, onDelete, onRerun, onSaveLogs }: {
+export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, resuming, savingLogs, onCancel, onDelete, onRerun, onResume, onSaveLogs }: {
   run: Run;
   now: number | null;
   changedFiles: number;
@@ -15,10 +15,12 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
   cancelRequested: boolean;
   deleting: boolean;
   rerunning: boolean;
+  resuming?: boolean;
   savingLogs?: boolean;
   onCancel: () => void;
   onDelete?: () => void;
   onRerun?: () => void;
+  onResume?: () => void;
   onSaveLogs?: () => void;
 }) {
   const config = resolvedExecutionConfig(run.resolvedConfig);
@@ -86,6 +88,18 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
             >
               {rerunning ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}
               Réexécuter
+            </Button>
+          )}
+          {run.kind === "SEQUENCE" && run.status === "FAILED" && onResume && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={resuming}
+              onClick={onResume}
+              title="Rejouer les validations après un succès Codex, sans redémarrer l’étape terminée"
+            >
+              {resuming ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
+              Reprendre
             </Button>
           )}
           {onDelete && (

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { runCodex, buildCodexAppServerArgs, buildCodexPermissionProfile, buildCodexSandboxPolicy, CODEX_RUN_OUTPUT_SCHEMA, type CodexRunEvent } from "../backend/codex/codex-runner";
+import { APP_SERVER_NOTIFICATION_OPT_OUTS, runCodex, buildCodexAppServerArgs, buildCodexPermissionProfile, buildCodexSandboxPolicy, CODEX_RUN_OUTPUT_SCHEMA, type CodexRunEvent } from "../backend/codex/codex-runner";
 import { probePythonSandbox } from "../backend/codex/codex-sandbox-preflight";
 import type { MainCodexAgentConfig } from "../src/types/codex-agents";
 import type { PythonRuntimeStatus } from "../src/types/project-execution";
@@ -42,6 +42,8 @@ test("app-server argv and per-turn sandbox honor configuration without bypass sh
   assert.equal(args[0], "app-server");
   assert.ok(args.includes("agents.enabled=false"));
   assert.ok(!args.some(arg => /bypass|full-auto|approve-for-me/.test(arg)));
+  assert.ok(APP_SERVER_NOTIFICATION_OPT_OUTS.includes("item/agentMessage/delta"));
+  assert.ok(APP_SERVER_NOTIFICATION_OPT_OUTS.includes("item/commandExecution/outputDelta"));
   assert.deepEqual(buildCodexSandboxPolicy(config, path.resolve("worktree")), { type: "readOnly", networkAccess: false });
   const profile = buildCodexPermissionProfile(config, [path.resolve("python")]);
   assert.equal(profile?.id, "agenttasker-run");
@@ -79,14 +81,18 @@ test("Python preflight executes the selected interpreter through the read-only p
     detail: "Python 3.12.3 is executable inside the Codex sandbox with read-only runtime access." });
 });
 
-test("stdin remains private and stdout, stderr, UTF-8 JSON, final structured result are captured", async t => {
+test("stdin remains private and protocol events, stderr, UTF-8 JSON, final structured result are captured", async t => {
   const { root, worktree, schema } = await fixture(t);
   const launch = await stub(root, `
     const rl = require('node:readline').createInterface({input:process.stdin});
     const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
     rl.on('line', line => {
       const message = JSON.parse(line);
-      if (message.id === 1) send({id:1,result:{}});
+      if (message.id === 1) {
+        const optOuts = message.params?.capabilities?.optOutNotificationMethods;
+        if (!Array.isArray(optOuts) || !optOuts.includes('item/agentMessage/delta')) process.exit(5);
+        send({id:1,result:{}});
+      }
       if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
       if (message.method === 'turn/start') {
         const prompt = message.params.input[0].text;
@@ -96,6 +102,8 @@ test("stdin remains private and stdout, stderr, UTF-8 JSON, final structured res
         send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
         send({method:'turn/started',params:{turn:{id:'turn-1'}}});
         const result = {status:'SUCCESS',summary:'terminé',blocking_error:null};
+        send({method:'item/agentMessage/delta',params:{itemId:'item-1',delta:'fragment inutile'}});
+        send({method:'thread/tokenUsage/updated',params:{threadId:'thread-1',tokenUsage:{total:42}}});
         send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',text:JSON.stringify(result)}}});
         send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
       }
@@ -111,8 +119,57 @@ test("stdin remains private and stdout, stderr, UTF-8 JSON, final structured res
   assert.equal(result.agentResult?.summary, "terminé");
   assert.ok(events.some(event => event.type === "started" && event.pid === result.pid));
   assert.equal(events.flatMap(e => e.type === "stderr" ? [e.text] : []).join(""), "diagnostic");
+  assert.equal(events.filter(event => event.type === "stdout").length, 0, "JSON-RPC transport lines must not be duplicated as stdout");
   assert.ok(events.some(e => e.type === "codex"));
+  assert.ok(!events.some(event => event.type === "codex" &&
+    ["item/agentMessage/delta", "thread/tokenUsage/updated"].includes((event.event as { type?: string }).type ?? "")));
   assert.ok(!JSON.stringify(events).includes("private prompt"));
+});
+
+test("large image results are accepted without persisting base64 payloads", async t => {
+  const { root, worktree, schema } = await fixture(t);
+  const imageCharacters = 2_500_000;
+  const launch = await stub(root, `
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+        send({method:'item/started',params:{item:{id:'image-1',type:'imageGeneration',status:'inProgress',result:''}}});
+        send({method:'item/completed',params:{item:{id:'image-1',type:'imageGeneration',status:'completed',
+          revisedPrompt:'cover',result:'A'.repeat(${imageCharacters}),savedPath:'/tmp/generated.png'}}});
+        send({method:'custom/largeEvent',params:{detail:'B'.repeat(300000)}});
+        send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',
+          text:JSON.stringify({status:'SUCCESS',summary:'image saved',blocking_error:null})}}});
+        send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
+      }
+    });
+    process.stdin.on('end', () => process.exit(0));`);
+  const events: CodexRunEvent[] = [];
+  const result = await runCodex({ worktreePath: worktree, prompt: "generate image", config,
+    timeoutMs: 10000, outputSchemaPath: schema, onEvent: event => events.push(event) }, launch);
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.error, null);
+  assert.equal(result.agentResult?.summary, "image saved");
+  const completed = events.find(event => event.type === "codex" &&
+    (event.event as { type?: string }).type === "item.completed" &&
+    (event.event as { item?: { id?: string } }).item?.id === "image-1");
+  assert.ok(completed?.type === "codex");
+  const image = (completed.event as { item: Record<string, unknown> }).item;
+  assert.equal(image.type, "image_generation");
+  assert.equal(image.saved_path, "/tmp/generated.png");
+  assert.equal(image.result_omitted, true);
+  assert.equal(image.result_encoding, "base64");
+  assert.equal(image.result_character_count, imageCharacters);
+  assert.equal("result" in image, false);
+  assert.ok(JSON.stringify(events).length < 200_000, "persisted events must stay bounded");
+  const largeEvent = events.find(event => event.type === "codex" &&
+    (event.event as { type?: string }).type === "custom/largeEvent");
+  assert.match(JSON.stringify(largeEvent), /AgentTasker omitted \d+ characters/);
 });
 
 test("semantic failure and invalid final outputs fail despite exit zero", async t => {

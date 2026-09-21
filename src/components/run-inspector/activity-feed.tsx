@@ -1,7 +1,12 @@
+"use client";
+
+import { useState } from "react";
 import { ArrowDownIcon, Loader2Icon, PauseIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventRenderer } from "./event-renderer";
 import type { NormalizedRunActivity } from "./types";
+
+const ACTIVITY_CHUNK_SIZE = 200;
 
 export function ActivityFeed({ activities, loading, active, follow, onFollowChange }: {
   activities: NormalizedRunActivity[];
@@ -10,6 +15,9 @@ export function ActivityFeed({ activities, loading, active, follow, onFollowChan
   follow: boolean;
   onFollowChange: (follow: boolean) => void;
 }) {
+  const [visibleLimit, setVisibleLimit] = useState(ACTIVITY_CHUNK_SIZE);
+  const hiddenCount = Math.max(0, activities.length - visibleLimit);
+  const visibleActivities = hiddenCount > 0 ? activities.slice(hiddenCount) : activities;
   return (
     <section aria-labelledby="run-activity-title">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -39,12 +47,18 @@ export function ActivityFeed({ activities, loading, active, follow, onFollowChan
       )}
       {activities.length > 0 && (
         <ol>
-          {activities.map((activity, index) => (
-            <EventRenderer key={activity.key} activity={activity} last={index === activities.length - 1} />
+          {hiddenCount > 0 && (
+            <li className="pb-5 text-center">
+              <Button type="button" variant="outline" size="sm" onClick={() => setVisibleLimit((value) => value + ACTIVITY_CHUNK_SIZE)}>
+                Afficher {Math.min(hiddenCount, ACTIVITY_CHUNK_SIZE)} activités précédentes
+              </Button>
+            </li>
+          )}
+          {visibleActivities.map((activity, index) => (
+            <EventRenderer key={activity.key} activity={activity} last={index === visibleActivities.length - 1} />
           ))}
         </ol>
       )}
     </section>
   );
 }
-

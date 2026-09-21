@@ -6,6 +6,7 @@ import { runGitEnvironment } from "../git/git-environment";
 import { detectPythonRuntime, withPythonRuntimeEnvironment } from "./python-runtime";
 import { withProjectEnvironment } from "./project-environment";
 import { terminateProcessTree, verifyExitedProcessTree } from "../codex/codex-runner";
+import { assertRequiredNodeRuntime, nodeRuntimeStatus } from "../runtime/node-runtime";
 import type {
   ExecutableStatus,
   PackageManager,
@@ -159,13 +160,14 @@ export function projectExecutionRuntimeStatus(
   localPythonExecutable: string | null = null,
 ): ProjectExecutionRuntimeStatus {
   return {
-    node: { available: true, executable: process.execPath, detail: process.version },
+    node: nodeRuntimeStatus(),
     packageManager: executableStatus(settings.packageManager),
     python: detectPythonRuntime(settings.pythonMinVersion, undefined, localPythonExecutable),
   };
 }
 
 export function assertProjectExecutionRuntime(settings: ProjectExecutionSettings, pythonRuntime: PythonRuntimeStatus): void {
+  assertRequiredNodeRuntime();
   if (settings.installDependencies || settings.validationScripts.length > 0) resolveLaunch(settings.packageManager, ["--version"]);
   if (settings.pythonMinVersion && !pythonRuntime.available) {
     throw new Error(`Python ${settings.pythonMinVersion}+ is required but is unavailable to AgentTasker. ${pythonRuntime.detail}`);

@@ -79,8 +79,33 @@ function parseAgentResult(message: string | null): CodexAgentResult | null {
 }
 
 const execFileAsync = promisify(execFile);
-const MAX_EVENT_LINE = 2 * 1024 * 1024;
+// App Server can legitimately emit multi-megabyte JSONL messages, notably when
+// an imageGeneration item contains its base64 result. Parse those messages, but
+// keep a separate absolute ceiling for genuinely abnormal transport payloads.
+const MAX_TRANSPORT_LINE_BYTES = 32 * 1024 * 1024;
+const MAX_PERSISTED_TEXT_CHARS = 256 * 1024;
+const PERSISTED_TEXT_EDGE_CHARS = 64 * 1024;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
+
+/**
+ * App Server's completed items are authoritative. These high-frequency
+ * notifications only stream intermediate text and can produce thousands of
+ * database rows without adding a distinct user-visible action.
+ */
+export const APP_SERVER_NOTIFICATION_OPT_OUTS = [
+  "item/agentMessage/delta",
+  "item/plan/delta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+  "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
+  "item/fileChange/outputDelta",
+  "turn/diff/updated",
+  "thread/tokenUsage/updated",
+] as const;
+
+const SILENT_APP_SERVER_NOTIFICATIONS = new Set<string>(APP_SERVER_NOTIFICATION_OPT_OUTS);
 
 /** App-server process settings that are not expressible as per-turn protocol fields. */
 export interface CodexPermissionProfile {
@@ -166,6 +191,18 @@ function textContent(value: unknown): string {
   return "";
 }
 
+function compactPersistedValue(value: unknown): unknown {
+  if (typeof value === "string" && value.length > MAX_PERSISTED_TEXT_CHARS) {
+    const omitted = value.length - (PERSISTED_TEXT_EDGE_CHARS * 2);
+    return `${value.slice(0, PERSISTED_TEXT_EDGE_CHARS)}\n` +
+      `[AgentTasker omitted ${omitted} characters from an oversized event field]\n` +
+      value.slice(-PERSISTED_TEXT_EDGE_CHARS);
+  }
+  if (Array.isArray(value)) return value.map(compactPersistedValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, compactPersistedValue(entry)]));
+}
+
 /** Keep the existing Run Inspector contract while app-server becomes the transport. */
 function mapAppServerItem(item: unknown): unknown {
   if (!item || typeof item !== "object" || Array.isArray(item)) return item;
@@ -181,6 +218,14 @@ function mapAppServerItem(item: unknown): unknown {
     case "webSearch": return { ...common, type: "web_search" };
     case "collabToolCall": return { ...common, type: "collab_tool_call", sender_thread_id: source.senderThreadId,
       receiver_thread_id: source.receiverThreadId, new_thread_id: source.newThreadId };
+    case "imageGeneration": {
+      const { result, savedPath, ...metadata } = source;
+      return { ...metadata, type: "image_generation", status: mappedStatus(source.status),
+        ...(savedPath === undefined ? {} : { saved_path: savedPath }),
+        ...(typeof result === "string" && result.length > 0
+          ? { result_omitted: true, result_encoding: "base64", result_character_count: result.length }
+          : {}) };
+    }
     default: return common;
   }
 }
@@ -466,7 +511,6 @@ export async function runCodex(
     let threadId: string | null = null;
     let turnId: string | null = null;
     let turnFinished = false;
-    const items = new Map<string, Record<string, unknown>>();
     const stdoutLines = createInterface({ input: child.stdout });
     const stderrDecoder = new StringDecoder("utf8");
     const emit = (event: CodexRunEvent) => {
@@ -510,7 +554,11 @@ export async function runCodex(
       child.stdin.write(`${JSON.stringify(message)}\n`);
     };
     const mappedEvent = (type: string, item?: unknown, extra?: Record<string, unknown>) => {
-      const event = { type, ...(item === undefined ? {} : { item: mapAppServerItem(item) }), ...(extra ?? {}) };
+      const event = compactPersistedValue({
+        type,
+        ...(item === undefined ? {} : { item: mapAppServerItem(item) }),
+        ...(extra ?? {}),
+      });
       emit({ type: "codex", event });
       return event;
     };
@@ -528,15 +576,21 @@ export async function runCodex(
     };
     const parseLine = (line: string) => {
       if (!line.trim()) return;
-      if (line.length > MAX_EVENT_LINE) {
-        result.error = "Codex app-server emitted an oversized JSON message.";
+      if (Buffer.byteLength(line, "utf8") > MAX_TRANSPORT_LINE_BYTES) {
+        result.error = `Codex app-server emitted a JSON message larger than the ${MAX_TRANSPORT_LINE_BYTES / (1024 * 1024)} MiB transport limit.`;
         stop("error");
         return;
       }
-      emit({ type: "stdout", text: `${line}\n` });
       let parsed: unknown;
-      try { parsed = JSON.parse(line); } catch { return; }
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      try { parsed = JSON.parse(line); }
+      catch {
+        emit({ type: "stdout", text: `${line}\n` });
+        return;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        emit({ type: "stdout", text: `${line}\n` });
+        return;
+      }
       const message = parsed as { id?: number; method?: string; params?: Record<string, unknown>;
         result?: Record<string, unknown>; error?: { message?: string } };
       if (typeof message.id === "number" && typeof message.method === "string") {
@@ -588,6 +642,9 @@ export async function runCodex(
         return;
       }
       if (!message.method) return;
+      // Keep this guard even when the server supports initialize opt-outs so
+      // older/partial implementations cannot flood persistence and the UI.
+      if (SILENT_APP_SERVER_NOTIFICATIONS.has(message.method)) return;
       const params = message.params ?? {};
       if (message.method === "thread/started") {
         const thread = params.thread as { id?: unknown } | undefined;
@@ -600,21 +657,11 @@ export async function runCodex(
         const item = params.item;
         if (item && typeof item === "object" && !Array.isArray(item)) {
           const record = item as Record<string, unknown>;
-          if (typeof record.id === "string") items.set(record.id, record);
           if (message.method === "item/completed" && record.type === "agentMessage" && typeof record.text === "string" && record.phase !== "commentary") {
             result.lastAgentMessage = record.text;
           }
         }
         mappedEvent(message.method === "item/started" ? "item.started" : "item.completed", item);
-      } else if (message.method === "item/commandExecution/outputDelta") {
-        const itemId = typeof params.itemId === "string" ? params.itemId : null;
-        const delta = typeof params.delta === "string" ? params.delta : "";
-        const current = itemId ? items.get(itemId) : undefined;
-        if (itemId && current) {
-          const updated = { ...current, aggregatedOutput: `${typeof current.aggregatedOutput === "string" ? current.aggregatedOutput : ""}${delta}` };
-          items.set(itemId, updated);
-          mappedEvent("item.updated", updated);
-        }
       } else if (message.method === "turn/completed") {
         const turn = params.turn as { status?: unknown; error?: { message?: unknown }; usage?: unknown } | undefined;
         turnFinished = true;
@@ -657,7 +704,10 @@ export async function runCodex(
       if (options.signal?.aborted) stop("cancelled");
       if (!termination) send({ method: "initialize", id: 1, params: {
         clientInfo: { name: "agenttasker", title: "AgentTasker", version: "0.1.0" },
-        capabilities: { experimentalApi: true },
+        capabilities: {
+          experimentalApi: true,
+          optOutNotificationMethods: APP_SERVER_NOTIFICATION_OPT_OUTS,
+        },
       } });
       else child.stdin.end();
     });

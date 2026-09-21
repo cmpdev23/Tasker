@@ -47,3 +47,7 @@
   nommé pour exposer des runtimes externes en lecture seule, recopier explicitement
   la permission réseau résolue. Un profil étendant `:workspace` garde le réseau
   désactivé par défaut, même si `sandbox_workspace_write.network_access` vaut vrai.
+- Une limite de ligne JSONL protège le transport, mais ne doit pas rejeter un
+  événement App Server légitime contenant un résultat binaire. Accepter une taille
+  de transport bornée plus élevée, puis retirer le base64 et borner les champs avant
+  toute persistance dans `run_events`.

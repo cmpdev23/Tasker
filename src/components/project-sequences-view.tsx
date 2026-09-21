@@ -42,6 +42,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const [sequenceEditor, setSequenceEditor] = useState<SequenceDefinition | null | undefined>(undefined);
   const [stepEditor, setStepEditor] = useState<SequenceStepDefinition | null | undefined>(undefined);
   const [starting, setStarting] = useState<string | null>(null);
+  const [resumingRunId, setResumingRunId] = useState<string | null>(null);
   const [mutating, setMutating] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [recovering, setRecovering] = useState(false);
@@ -124,6 +125,19 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
       toast.success("Sequence ajoutée à la file.");
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { startingRef.current = false; setStarting(null); }
+  }
+
+  async function resumeSequence(runId: string) {
+    if (resumingRunId) return;
+    setResumingRunId(runId);
+    try {
+      const data = await taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/resume`, { method: "POST" });
+      if (!data?.run?.id) throw new Error("Réponse de reprise invalide.");
+      setSelectedRun(data.run);
+      setRefresh((value) => value + 1);
+      toast.success("Reprise ajoutée à la file : Codex ne sera pas relancé pour l’étape déjà terminée.");
+    } catch (caught) { toast.error(errorMessage(caught)); }
+    finally { setResumingRunId(null); }
   }
 
   async function reorderStep(index: number, direction: -1 | 1) {
@@ -334,8 +348,10 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
       {stepEditor !== undefined && <SequenceStepEditorDialog step={stepEditor} onClose={() => setStepEditor(undefined)} onSave={saveStep} />}
       {selectedRun && <TaskRunSheet key={selectedRun.id} projectId={project.id} initialRun={selectedRun}
         rerunning={starting === (selectedRun.sequenceId || selectedRun.taskId)}
+        resuming={resumingRunId === selectedRun.id}
         onRerun={sequences.some((sequence) => sequence.id === (selectedRun.sequenceId || selectedRun.taskId))
           ? () => void runSequence(selectedRun.sequenceId || selectedRun.taskId) : undefined}
+        onResume={() => void resumeSequence(selectedRun.id)}
         onClose={() => { setSelectedRun(null); setRefresh((value) => value + 1); }} />}
     </div>
   );

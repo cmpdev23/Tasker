@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { RunEvent } from "../db/schema";
-import { normalizeRunEvents, parseRunResult } from "../src/components/run-inspector/event-normalizer";
+import { isRelevantRunInspectorEvent, normalizeRunEvents, parseRunResult } from "../src/components/run-inspector/event-normalizer";
 import { changedFileCount, displayModel, resolvedExecutionConfig } from "../src/components/run-inspector/execution-config";
 import { isRemovableRun, isRerunnableRun } from "../src/components/task-ui-utils";
 
@@ -50,6 +50,19 @@ test("terminal runs never leave incomplete items visually running", () => {
     event(1, "codex", { type: "item.started", item: { id: "orphan", type: "collab_tool_call", tool: "spawn_agent", status: "in_progress", receiver_thread_ids: [], agents_states: {} } }),
   ], { terminal: true });
   assert.equal(activities[0].state, "interrupted");
+});
+
+test("historical transport duplicates and streaming fragments stay out of the inspector", () => {
+  const noisyEvents = [
+    event(1, "stdout", { method: "item/agentMessage/delta", params: { itemId: "m", delta: "a" } }),
+    event(2, "codex", { type: "item/agentMessage/delta", itemId: "m", delta: "a" }),
+    event(3, "codex", { type: "item.updated", item: { id: "c", type: "command_execution", aggregated_output: "partial" } }),
+  ];
+  assert.deepEqual(noisyEvents.map(isRelevantRunInspectorEvent), [false, false, false]);
+  const useful = event(4, "codex", { type: "item.completed", item: { id: "m", type: "agent_message", text: "Réponse finale" } });
+  const activities = normalizeRunEvents([...noisyEvents, useful]);
+  assert.equal(activities.length, 1);
+  assert.equal(activities[0].kind, "agent-message");
 });
 
 test("run result and execution snapshot helpers tolerate structured and malformed data", () => {

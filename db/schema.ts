@@ -51,6 +51,12 @@ export const runs = sqliteTable("runs", {
   taskName: text("task_name").notNull(),
   sequenceId: text("sequence_id"),
   currentStepId: text("current_step_id"),
+  /** Terminal Run whose preserved worktree is safely reused by this continuation. */
+  // Self-referential integrity is enforced by the migration and repository transaction.
+  // Keeping this column plain avoids a cyclic TypeScript table initializer.
+  resumeFromRunId: text("resume_from_run_id"),
+  resumeStage: text("resume_stage"),
+  resumeStepId: text("resume_step_id"),
   status: text("status").notNull(),
   scheduledAt: text("scheduled_at"),
   queuedAt: text("queued_at").notNull(),
@@ -74,6 +80,7 @@ export const runs = sqliteTable("runs", {
   cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
 }, (table) => [index("runs_project_created").on(table.projectId, table.createdAt),
+  uniqueIndex("runs_resume_source").on(table.resumeFromRunId),
   uniqueIndex("runs_schedule_occurrence").on(table.projectId, table.taskId, table.scheduledAt)]);
 
 export const runEvents = sqliteTable("run_events", {

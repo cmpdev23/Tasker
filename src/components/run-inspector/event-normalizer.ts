@@ -29,6 +29,34 @@ function parseJson(value: string | null) {
   catch { return null; }
 }
 
+const NOISY_CODEX_EVENT_TYPES = new Set([
+  "item.updated",
+  "item/agentMessage/delta",
+  "item/plan/delta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+  "item/commandExecution/outputDelta",
+  "item/commandExecution/terminalInteraction",
+  "item/fileChange/outputDelta",
+  "turn/diff/updated",
+  "thread/tokenUsage/updated",
+]);
+
+/** Removes transport duplicates and streaming fragments from historical Runs. */
+export function isRelevantRunInspectorEvent(event: RunEvent) {
+  const parsed = parseJson(event.rawPayload ?? event.message);
+  const payload = record(parsed);
+  if (event.type === "stdout" && payload &&
+      (typeof payload.method === "string" || typeof payload.id === "number")) {
+    return false;
+  }
+  if (event.type === "codex" && NOISY_CODEX_EVENT_TYPES.has(text(payload?.type) ?? "")) {
+    return false;
+  }
+  return true;
+}
+
 function semanticMessage(value: string) {
   const parsed = parseJson(value);
   const object = record(parsed);
@@ -244,6 +272,7 @@ export function normalizeRunEvents(events: RunEvent[], options: { worktreePath?:
   const itemIndexes = new Map<string, number>();
 
   for (const event of events) {
+    if (!isRelevantRunInspectorEvent(event)) continue;
     const parsed = event.type === "codex" ? parseJson(event.rawPayload ?? event.message) : null;
     const raw = record(parsed);
     if (raw && /^item\.(?:started|updated|completed)$/.test(text(raw.type) ?? "")) {

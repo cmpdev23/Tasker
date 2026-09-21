@@ -9,20 +9,26 @@
     "agenttasker": "./bin/agenttasker.mjs"
   },
   "scripts": {
+    "predev": "node scripts/require-node-24.mjs",
     "dev": "next dev --port 5000",
+    "prebuild": "node scripts/require-node-24.mjs",
     "build": "next build",
+    "prestart": "node scripts/require-node-24.mjs",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/require-node-24.mjs",
     "test": "node scripts/run-tests.mjs",
+    "preagenttasker": "node scripts/require-node-24.mjs",
     "agenttasker": "node bin/agenttasker.mjs",
     "db:generate": "drizzle-kit generate",
+    "predb:migrate": "node scripts/require-node-24.mjs",
     "db:migrate": "node db/migrate.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@tanstack/react-table": "^9.2.4",
-    "better-sqlite3": "^11.8.0",
+    "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cn": "^0.2.6",

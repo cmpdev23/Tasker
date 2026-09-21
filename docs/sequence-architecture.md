@@ -136,6 +136,24 @@ suivantes `SKIPPED`. En mode `after_each_step`, les branches et PR des étapes d
 réussies restent publiées et visibles dans l’inspecteur. Lors d’une annulation, les
 étapes non terminées deviennent `CANCELLED`.
 
+### Reprendre après une validation échouée
+
+Un Run de Sequence échoué peut afficher **Reprendre** lorsque Codex a produit un
+résultat structuré `SUCCESS` pour l’étape courante, que le processus est terminé et
+qu’une commande de validation de cette étape a échoué. L’action crée un nouveau Run
+lié au Run source : l’historique source reste immuable, tandis que le nouveau Run
+réutilise exclusivement le worktree et la branche préservés, rejoue la préparation
+nécessaire puis les validations de l’étape. Codex n’est pas relancé pour cette étape.
+
+Après cette validation, le runner commit l’étape et continue avec les étapes
+suivantes. La reprise est refusée si les coordonnées Git, l’arrêt du processus, les
+événements de validation ou la définition ordonnée des étapes ne correspondent plus.
+Une seule reprise directe est admise par Run ; si elle échoue à son tour, elle devient
+à son tour la source vérifiable d’une nouvelle reprise. La configuration Git (remote
+et branche de base) doit rester identique; les commandes de validation actuelles du
+Project sont relues pour permettre de corriger un problème d’environnement comme la
+version Node requise.
+
 ## Transmission entre étapes
 
 Toutes les étapes utilisent le même worktree et la même branche. Les fichiers et
@@ -153,6 +171,7 @@ La tab Sequences offre :
 - un écran de détail pour ajouter, modifier, supprimer et réordonner ses étapes;
 - le choix entre une PR finale et des PR empilées après chaque étape avec commit;
 - le lancement manuel depuis la liste;
+- **Reprendre** après le cas précis d’un succès Codex suivi d’une validation échouée;
 - l’historique des Runs et le Run Inspector;
 - une progression dédiée affichant chaque SequenceStepRun.
 

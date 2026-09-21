@@ -25,6 +25,7 @@ export interface ResolvedExecutionConfig {
   installTimeoutMinutes: number | null;
   validationScripts: string[] | null;
   validationTimeoutMinutes: number | null;
+  node: string | null;
   pythonMinimumVersion: string | null;
   pythonExecutable: string | null;
   pythonVersion: string | null;
@@ -44,6 +45,7 @@ export function resolvedExecutionConfig(value: string | null): ResolvedExecution
   const execution = record(root?.execution);
   const git = record(root?.git);
   const sequence = record(root?.sequence);
+  const node = record(root?.node);
   const python = record(root?.python);
   const validationScripts = Array.isArray(execution?.validationScripts) &&
     execution.validationScripts.every((script) => typeof script === "string")
@@ -64,6 +66,7 @@ export function resolvedExecutionConfig(value: string | null): ResolvedExecution
     installTimeoutMinutes: typeof execution?.installTimeoutMinutes === "number" ? execution.installTimeoutMinutes : null,
     validationScripts,
     validationTimeoutMinutes: typeof execution?.validationTimeoutMinutes === "number" ? execution.validationTimeoutMinutes : null,
+    node: stringValue(node?.detail),
     pythonMinimumVersion: stringValue(execution?.pythonMinVersion),
     pythonExecutable: stringValue(python?.executable),
     pythonVersion: stringValue(python?.version),
@@ -112,6 +115,7 @@ export function runExecutionRows(run: Run, config = resolvedExecutionConfig(run.
     ["Réseau", config.network === true ? "Autorisé" : config.network === false ? "Désactivé" : "Non renseigné"],
     ["Gestionnaire de paquets", config.packageManager ?? "Non renseigné"],
     ["Installation", config.installDependencies === true ? "Activée" : config.installDependencies === false ? "Désactivée" : "Non renseignée"],
+    ["Node.js", config.node ?? "Non renseigné"],
     ["Python requis", config.pythonMinimumVersion ? `${config.pythonMinimumVersion}+` : "Optionnel"],
     ["Python résolu", config.pythonExecutable ? `${config.pythonVersion ? `Python ${config.pythonVersion} — ` : ""}${config.pythonExecutable}` : "Aucun détecté"],
     ["Validations", config.validationScripts?.length ? config.validationScripts.join(", ") : "Aucune"],

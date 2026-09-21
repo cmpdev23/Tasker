@@ -15,6 +15,19 @@ export interface PrepareRunWorktreeOptions {
   onPrepared?: (worktree: RunWorktree) => void | Promise<void>;
 }
 
+export interface ResumeRunWorktreeOptions {
+  repoPath: string;
+  worktreesRoot: string;
+  sourceRunId: string;
+  taskId: string;
+  worktreePath: string;
+  branch: string;
+  remote: string;
+  baseBranch: string;
+  baseCommit: string;
+  signal?: AbortSignal;
+}
+
 export interface RunWorktree {
   readonly repoPath: string;
   readonly worktreesRoot: string;
@@ -139,6 +152,26 @@ export async function prepareRunWorktree(options: PrepareRunWorktreeOptions): Pr
     // The worker can persist recovery coordinates even if worktree creation only partly succeeded.
     throw Object.assign(new Error("Worktree preparation failed; any partial branch/worktree was preserved.", { cause }), { worktree });
   }
+}
+
+/** Reopen only the exact, preserved worktree created for a prior Run; never create or reset one. */
+export async function resumeRunWorktree(options: ResumeRunWorktreeOptions): Promise<RunWorktree> {
+  if (!UUID.test(options.sourceRunId) || !TASK_ID.test(options.taskId)) throw new Error("Invalid source Run UUID or task identifier.");
+  const repoPath = await fs.realpath((await git(options.repoPath, ["rev-parse", "--show-toplevel"], options.signal)).trim());
+  const worktreesRoot = await fs.realpath(options.worktreesRoot);
+  const expectedBranch = `tasker/run-${options.sourceRunId}-${options.taskId}`;
+  const expectedPath = path.join(worktreesRoot, expectedBranch.slice("tasker/".length));
+  const worktreePath = await fs.realpath(options.worktreePath);
+  if (options.branch !== expectedBranch || worktreePath !== expectedPath) {
+    throw new Error("The preserved worktree does not match the source Run identity.");
+  }
+  const worktree: RunWorktree = {
+    repoPath, worktreesRoot, worktreePath, branch: options.branch, remote: options.remote,
+    baseBranch: options.baseBranch, trackingRef: `refs/remotes/${options.remote}/${options.baseBranch}`,
+    baseCommit: options.baseCommit,
+  };
+  await verifyRunWorktree(worktree, options.signal);
+  return worktree;
 }
 
 /** Reject replaced directories, detached HEAD, switched branches, or another repository. */
@@ -293,4 +326,4 @@ export async function deleteRunArtifacts(options: DeleteRunArtifactsOptions): Pr
   return { worktreeRemoved: worktreeExists, branchRemoved };
 }
 
-export const runGitService = { prepareRunWorktree, verifyRunWorktree, inspectRunChanges, finalizeRunWorktree, cleanupSuccessfulWorktree, deleteRunArtifacts };
+export const runGitService = { prepareRunWorktree, resumeRunWorktree, verifyRunWorktree, inspectRunChanges, finalizeRunWorktree, cleanupSuccessfulWorktree, deleteRunArtifacts };

@@ -76,7 +76,11 @@ export const runService = {
       }
       candidate = runService.confirmTermination(projectId, runId);
     }
-    const hasArtifacts = Boolean(candidate.worktreePath || candidate.runBranch);
+    if (!candidate.resumeFromRunId && runRepository.hasContinuation(candidate.id)) {
+      throw new ConflictError("Ce Run possède une reprise liée. Supprimez d’abord cette reprise pour préserver son worktree partagé.");
+    }
+    // A continuation displays its source coordinates for traceability but never owns or deletes them.
+    const hasArtifacts = !candidate.resumeFromRunId && Boolean(candidate.worktreePath || candidate.runBranch);
     if (hasArtifacts && !options.deleteArtifacts) {
       throw new ConflictError("Ce Run possède du travail Git préservé. Confirmez sa suppression avec le worktree et la branche.");
     }

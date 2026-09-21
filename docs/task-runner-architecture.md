@@ -190,6 +190,16 @@ Settings d’exécution actuels. Le worktree échoué reste donc disponible pour
 mais n’est pas repris comme workspace du nouveau Run. Une Task supprimée ne peut
 pas être réexécutée depuis son historique conservé.
 
+Les Sequences disposent en complément d’une reprise volontaire et strictement
+bornée : après un résultat Codex structuré positif suivi d’une validation échouée,
+**Reprendre** crée un nouveau Run lié à la source et réutilise son worktree intact.
+Le worker ne relance pas Codex pour l’étape déjà terminée; il rejoue les validations,
+commit l’étape si elles passent, puis continue la Sequence. Cette voie exige une
+terminaison vérifiée, des coordonnées Git exactes, un événement de validation échoué
+et une définition d’étapes identique; elle refuse sinon. Les commandes de validation
+actuelles sont utilisées, ce qui permet notamment de corriger un runtime local sans
+consommer à nouveau les tokens de l’étape achevée.
+
 Le header affiche de façon compacte le modèle, le reasoning, le sandbox et le
 réglage réseau `workspace-write` depuis le snapshot JSON `resolvedConfig` du Run.
 Les autres valeurs sont dans les détails repliables. Une valeur absente ou
@@ -225,9 +235,11 @@ validation_timeout_minutes = 20
 action explicite et désactivée par défaut, car elle peut accéder au réseau et lancer
 les scripts de cycle de vie du dépôt. Lorsqu’elle est activée, le worker lance dans
 le worktree, avant Codex, `npm ci`, `pnpm install --frozen-lockfile`,
-`yarn install --immutable` ou `bun install --frozen-lockfile`. Node est injecté dans
-le `PATH` du sous-processus depuis le runtime qui exécute AgentTasker; son chemin
-absolu reste une donnée de machine et n’est jamais écrit dans `.tasker/`.
+`yarn install --immutable` ou `bun install --frozen-lockfile`. AgentTasker exige
+Node.js 24.x : le démarrage par les scripts npm et le préflight d’un Run refusent
+explicitement tout autre runtime. Node 24 est injecté dans le `PATH` du
+sous-processus depuis le runtime qui exécute AgentTasker; son chemin absolu reste
+une donnée de machine et n’est jamais écrit dans `.tasker/`.
 
 Les commandes de préparation et de validation disposent d’un environnement distinct
 du serveur Next.js d’AgentTasker : `NODE_ENV`, `NEXT_RUNTIME`, `TURBOPACK` et les

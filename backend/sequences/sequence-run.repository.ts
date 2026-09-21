@@ -23,6 +23,24 @@ export const sequenceRunRepository = {
       return this.list(runId);
     }).immediate();
   },
+  initializeValidationResume(runId: string, sourceRunId: string, resumeStepId: string): SequenceStepRun[] {
+    return sqlite.transaction(() => {
+      const source = this.list(sourceRunId);
+      const resumeIndex = source.findIndex((step) => step.stepId === resumeStepId && step.status === "FAILED");
+      if (resumeIndex < 0) throw new Error("The source Sequence Run has no failed validation step to resume.");
+      if (source.slice(0, resumeIndex).some((step) => step.status !== "SUCCESS")) throw new Error("The source Sequence Run has an incomplete prior step.");
+      if (source.slice(resumeIndex + 1).some((step) => step.status !== "SKIPPED")) throw new Error("The source Sequence Run continued after its failed validation step.");
+      db.delete(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId)).run();
+      db.insert(sequenceStepRuns).values(source.map((step, position) => ({
+        id: randomUUID(), runId, sequenceId: step.sequenceId, stepId: step.stepId, stepName: step.stepName, position,
+        status: position < resumeIndex ? "SUCCESS" : "PENDING",
+        ...(position < resumeIndex ? { startedAt: step.startedAt, completedAt: step.completedAt, exitCode: step.exitCode,
+          result: step.result, commitHash: step.commitHash, publicationBranch: step.publicationBranch,
+          pushedAt: step.pushedAt, pullRequestUrl: step.pullRequestUrl, diff: step.diff } : {}),
+      }))).run();
+      return this.list(runId);
+    }).immediate();
+  },
   list(runId: string): SequenceStepRun[] {
     return db.select().from(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId))
       .orderBy(asc(sequenceStepRuns.position)).all();
@@ -44,4 +62,3 @@ export const sequenceRunRepository = {
       .where(and(eq(sequenceStepRuns.runId, runId), inArray(sequenceStepRuns.status, ["PENDING", "RUNNING", "VALIDATING"]))).run();
   },
 };
-

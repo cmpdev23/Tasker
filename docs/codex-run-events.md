@@ -3,11 +3,11 @@
 ## Situation actuelle
 
 AgentTasker lance Codex en mode non interactif via `codex app-server`. Le stdout
-est un flux JSON-RPC JSON Lines, conservé dans `run_events` avec les événements
-propres au runner. Un adaptateur traduit les notifications `thread/*`, `turn/*` et
+transporte un flux JSON-RPC JSON Lines dont les notifications sémantiques sont
+conservées dans `run_events` avec les événements propres au runner. Un adaptateur traduit les notifications `thread/*`, `turn/*` et
 `item/*` vers le contrat historique snake_case du Run Inspector. Celui-ci transforme
-le flux en activité lisible tout en gardant les messages bruts accessibles pour le
-diagnostic et demeure compatible avec les anciens Runs produits par `codex exec --json`.
+le flux en activité lisible, conserve les événements sémantiques utiles au diagnostic
+et demeure compatible avec les anciens Runs produits par `codex exec --json`.
 
 ## Problème précis
 
@@ -23,9 +23,10 @@ persistance d’une version précise du protocole.
 
 Le Run Inspector doit présenter une timeline sémantique fidèle au flux reçu :
 une activité par item, un renderer adapté à son type, un résultat final visible,
-et un fallback sûr pour tout événement futur. Les événements originaux restent
-consultables dans « Événements Codex bruts » et le moteur d’exécution ne dépend
-pas de l’interprétation UI.
+et un fallback sûr pour tout événement futur. Les événements de cycle de vie complets
+restent consultables dans le diagnostic technique, mais les fragments de streaming et
+leur duplication JSON-RPC ne sont ni des actions utilisateur ni des journaux utiles.
+Le moteur d’exécution ne dépend pas de l’interprétation UI.
 
 ## Contrats officiels vérifiés
 
@@ -132,8 +133,8 @@ Ce Run a confirmé plusieurs réalités que l’interface doit préserver :
 - un appel MCP en échec contient une erreur sémantique exploitable, tandis que
   stderr contient souvent un diagnostic dupliqué ou non bloquant;
 - un `collab_tool_call` commencé peut ne jamais recevoir de terminal;
-- stdout contient les mêmes objets JSONL déjà persistés comme événements
-  `codex`; il doit rester brut et ne pas doubler l’activité principale;
+- stdout contenait historiquement les mêmes objets JSONL déjà persistés comme
+  événements `codex`; les nouveaux Runs ne conservent plus cette duplication;
 - `turn.completed` n’implique pas que le Run AgentTasker réussit : le résultat
   structuré, Git et les validations restent autoritaires.
 
@@ -163,18 +164,43 @@ RunEvent SQLite
 3. Un message agent structuré affiche son `summary`; l’enveloppe JSON reste
    disponible dans les événements bruts.
 4. Un chemin de fichier situé sous le worktree courant devient relatif au dépôt.
-5. stdout, stderr et le PID ne sont pas injectés dans l’activité humaine. Les
-   erreurs sémantiques Codex et l’erreur finale du Run restent visibles.
+5. Les lignes JSON-RPC stdout, les deltas et le PID ne sont pas injectés dans
+   l’activité humaine. Les sorties non JSON, stderr, les erreurs sémantiques Codex
+   et l’erreur finale du Run restent visibles.
 6. Un item encore `in_progress` quand le Run devient terminal est présenté comme
    interrompu plutôt que comme toujours actif.
 7. Le résultat final et l’erreur du Run proviennent du modèle `Run`, jamais d’une
    simple déclaration de succès intermédiaire de l’agent.
 
-La normalisation complète est mémoïsée par le composant. Le panneau brut ne rend
-ses lignes que lorsqu’il est ouvert, ce qui évite de monter des centaines de
-blocs JSON pendant le suivi normal. Cette approche reste linéaire et adaptée aux
-Runs de 100 à 1 000+ événements sans introduire une couche de virtualisation
-prématurée.
+La normalisation complète est mémoïsée par le composant. La timeline et le panneau
+de diagnostic montent au plus 200 et 100 entrées à la fois, puis permettent de
+charger les précédentes par tranche. Les anciens doublons stdout JSON-RPC,
+`item.updated` incrémentaux et deltas connus sont écartés avant d’entrer dans l’état
+React. Cela garde le Sheet utilisable même pour un ancien Run contenant des dizaines
+de milliers de fragments.
+
+## Politique de volume
+
+À l’initialisation, AgentTasker utilise `optOutNotificationMethods` pour supprimer
+les deltas de message, plan, reasoning, sortie de commande, ancien file change,
+diff de tour et compteur de tokens. `item/started` et `item/completed` restent la
+source autoritaire; les commandes, changements de fichiers, outils, erreurs et
+résultats finaux demeurent donc traçables. Un garde local applique la même politique
+si une version de l’App Server ignore partiellement l’opt-out.
+
+Une ligne stdout non JSON reste enregistrée comme diagnostic. Une ligne JSON-RPC
+valide n’est enregistrée qu’une fois sous forme d’événement `codex`, jamais une
+seconde fois comme stdout. Cette politique réduit le volume à la source sans
+supprimer rétroactivement les événements des Runs existants.
+
+Les items de génération d’image peuvent contenir le PNG complet encodé en base64
+dans leur champ `result`, même lorsque l’App Server a déjà fourni `savedPath`.
+AgentTasker accepte ces messages au niveau du transport, retire le base64 avant la
+persistance et conserve le chemin, le statut, l’encodage et la taille du résultat
+omis. Les autres champs texte exceptionnellement volumineux sont réduits à un
+extrait borné avec un marqueur explicite. Le transport garde une limite absolue de
+32 Mio par ligne JSON afin qu’un message réellement anormal ne puisse pas consommer
+une quantité de mémoire sans borne.
 
 ## Commandes gérées par AgentTasker
 

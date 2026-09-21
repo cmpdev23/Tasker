@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Run } from "../../db/schema";
+import type { Run, SequenceStepRun } from "../../db/schema";
 import type { ProjectCommandReport } from "../../src/types/project-command";
 import type { ProjectProcessEnvironment } from "../../src/types/project-execution";
 import type { SequenceStepDefinition } from "../../src/types/sequences";
-import { runCodex, CODEX_RUN_OUTPUT_SCHEMA } from "../codex/codex-runner";
+import { runCodex, CODEX_RUN_OUTPUT_SCHEMA, type CodexRunResult } from "../codex/codex-runner";
 import { agentsService } from "../tasker/agents.service";
 import { parseProjectExecutionSettings } from "../tasker/project-execution";
 import { parseProjectGitSettings } from "../tasker/project-git";
@@ -15,6 +15,7 @@ import {
   finalizeRunWorktree,
   inspectRunChanges,
   prepareRunWorktree,
+  resumeRunWorktree,
   type RunGitResult,
   type RunWorktree,
 } from "../git/run-git.service";
@@ -51,6 +52,30 @@ function previousStepContext(outcomes: Array<{ step: SequenceStepDefinition; sum
   let content = sections.join("\n\n");
   if (content.length > 64_000) content = `Earlier summaries omitted to keep the handoff bounded.\n\n${content.slice(-64_000)}`;
   return content;
+}
+
+function storedAgentResult(serialized: string | null): CodexRunResult {
+  if (!serialized) throw new Error("The completed Codex result is missing from the source Run.");
+  let agentResult: CodexRunResult["agentResult"] = null;
+  try {
+    const value = JSON.parse(serialized) as { status?: unknown; summary?: unknown; blocking_error?: unknown };
+    if (value.status === "SUCCESS" && typeof value.summary === "string" && value.blocking_error === null) {
+      agentResult = { status: "SUCCESS", summary: value.summary, blocking_error: null };
+    }
+  } catch { /* The resume service already validates this; fail closed if storage changed. */ }
+  if (!agentResult) throw new Error("The source Run does not contain a successful structured Codex result.");
+  return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+    lastAgentMessage: serialized, error: null, agentResult, terminationVerified: true };
+}
+
+function priorOutcomes(sequence: SequenceStepDefinition[], sourceSteps: SequenceStepRun[], resumeIndex: number) {
+  return sequence.slice(0, resumeIndex).map((step, index) => {
+    const source = sourceSteps[index];
+    if (!source || source.stepId !== step.id || source.status !== "SUCCESS") {
+      throw new Error("The source Sequence steps no longer match the current Sequence definition.");
+    }
+    return { step, summary: storedAgentResult(source.result).agentResult?.summary ?? "Step completed." };
+  });
 }
 
 export async function executeSequenceRun(
@@ -142,7 +167,22 @@ export async function executeSequenceRun(
     if (!project.repositoryPath) throw new Error("Configure the project repository in Settings first.");
     const sequence = await sequenceService.get(run.projectId, run.sequenceId);
     if (!sequence.steps.length) throw new Error("The Sequence has no steps.");
-    sequenceRunRepository.initialize(run.id, sequence);
+    const sourceRun = run.resumeFromRunId ? runRepository.get(run.projectId, run.resumeFromRunId) : null;
+    const isValidationResume = Boolean(sourceRun && run.resumeStage === "VALIDATING" && run.resumeStepId);
+    if (run.resumeFromRunId && !isValidationResume) throw new Error("Unsupported Run resume state.");
+    const sourceSteps = sourceRun ? sequenceRunRepository.list(sourceRun.id) : [];
+    const resumeIndex = isValidationResume ? sourceSteps.findIndex((step) => step.stepId === run.resumeStepId) : -1;
+    if (isValidationResume && (resumeIndex < 0 || sourceSteps[resumeIndex].status !== "FAILED")) {
+      throw new Error("The source Sequence Run no longer has the requested failed step.");
+    }
+    if (isValidationResume) {
+      const currentSteps = sequenceRunRepository.list(run.id);
+      if (currentSteps.length !== sequence.steps.length || currentSteps.some((step, index) => step.stepId !== sequence.steps[index]?.id)) {
+        throw new Error("The current Sequence definition changed after the validation resume was queued.");
+      }
+    } else {
+      sequenceRunRepository.initialize(run.id, sequence);
+    }
     const projectToml = readProjectFile(project.repositoryPath, ".tasker/project.toml");
     const executionSettings = parseProjectExecutionSettings(projectToml);
     const localRuntime = await projectRuntimePreferenceService.get(run.projectId);
@@ -154,6 +194,7 @@ export async function executeSequenceRun(
       : "No project environment variables configured.");
     const executionRuntime = projectExecutionRuntimeStatus(executionSettings, localRuntime.pythonExecutable);
     pythonRuntime = executionRuntime.python;
+    event("runtime", `Node.js runtime: ${executionRuntime.node.detail}`, JSON.stringify(executionRuntime.node));
     event("runtime", `Python runtime: ${pythonRuntime.detail}`, JSON.stringify(pythonRuntime));
     assertProjectExecutionRuntime(executionSettings, pythonRuntime);
     const git = sectionContent(projectToml, "git");
@@ -161,8 +202,13 @@ export async function executeSequenceRun(
     const baseBranch = readString(git, "base_branch");
     if (!baseBranch) throw new Error("Configure a base branch in .tasker/project.toml.");
     const remote = gitSettings.remote;
+    if (sourceRun && (sourceRun.baseRemote !== remote || sourceRun.baseBranch !== baseBranch)) {
+      throw new Error("Git remote or base branch changed since the failed Run; validation resume refused.");
+    }
     const publishEachStep = sequence.pullRequestStrategy === "after_each_step" && gitSettings.createPullRequest;
-    previousPublicationBranch = baseBranch;
+    previousPublicationBranch = isValidationResume
+      ? sourceSteps.slice(0, resumeIndex).reduce<string | null>((branch, step) => step.publicationBranch ?? branch, baseBranch)
+      : baseBranch;
     readProjectFile(project.repositoryPath, ".tasker/agents/main.toml");
     const { main } = await agentsService.getAgents(run.projectId);
     const projectInstructions = readProjectFile(project.repositoryPath, ".tasker/instructions.md");
@@ -177,6 +223,7 @@ export async function executeSequenceRun(
       resolvedConfig: JSON.stringify({
         codex: main,
         execution: executionSettings,
+        node: executionRuntime.node,
         python: pythonRuntime,
         localExecution: { ...localRuntime, environmentVariables: environmentVariableNames },
         git: gitSettings,
@@ -190,22 +237,35 @@ export async function executeSequenceRun(
       }),
     });
     controller.signal.throwIfAborted();
-    worktree = await prepareRunWorktree({
-      repoPath: project.repositoryPath,
-      worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"),
-      runId: run.id,
-      taskId: sequence.id,
-      remote,
-      baseBranch,
-      signal: controller.signal,
-      onPrepared: (prepared) => {
-        runRepository.update(run.id, {
-          baseCommit: prepared.baseCommit,
-          runBranch: prepared.branch,
-          worktreePath: prepared.worktreePath,
-        });
-      },
-    });
+    if (isValidationResume && sourceRun) {
+      worktree = await resumeRunWorktree({
+        repoPath: project.repositoryPath, worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"),
+        sourceRunId: sourceRun.id, taskId: sequence.id, worktreePath: sourceRun.worktreePath!, branch: sourceRun.runBranch!,
+        remote, baseBranch, baseCommit: sourceRun.baseCommit!, signal: controller.signal,
+      });
+      runRepository.update(run.id, {
+        baseRemote: sourceRun.baseRemote, baseBranch: sourceRun.baseBranch, baseCommit: sourceRun.baseCommit,
+        runBranch: sourceRun.runBranch, worktreePath: sourceRun.worktreePath,
+      });
+      event("resume", `Replaying validation for step ${resumeIndex + 1} without starting Codex again.`);
+    } else {
+      worktree = await prepareRunWorktree({
+        repoPath: project.repositoryPath,
+        worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"),
+        runId: run.id,
+        taskId: sequence.id,
+        remote,
+        baseBranch,
+        signal: controller.signal,
+        onPrepared: (prepared) => {
+          runRepository.update(run.id, {
+            baseCommit: prepared.baseCommit,
+            runBranch: prepared.branch,
+            worktreePath: prepared.worktreePath,
+          });
+        },
+      });
+    }
     for (const command of preparationCommands) {
       controller.signal.throwIfAborted();
       await executeProjectCommand(command, "preparation");
@@ -213,10 +273,14 @@ export async function executeSequenceRun(
 
     const outputSchemaPath = path.join(RUNNER_CONFIG.dataDirectory, "run-output.schema.json");
     fs.writeFileSync(outputSchemaPath, JSON.stringify(CODEX_RUN_OUTPUT_SCHEMA));
-    let stepBaseCommit = worktree.baseCommit;
-    const outcomes: Array<{ step: SequenceStepDefinition; summary: string }> = [];
+    let stepBaseCommit = isValidationResume
+      ? sourceSteps.slice(0, resumeIndex).reduce((commit, step) => step.commitHash ?? commit, worktree.baseCommit)
+      : worktree.baseCommit;
+    latestCommit = isValidationResume ? (stepBaseCommit === worktree.baseCommit ? null : stepBaseCommit) : null;
+    const outcomes: Array<{ step: SequenceStepDefinition; summary: string }> = isValidationResume
+      ? priorOutcomes(sequence.steps, sourceSteps, resumeIndex) : [];
 
-    for (let index = 0; index < sequence.steps.length; index++) {
+    for (let index = isValidationResume ? resumeIndex : 0; index < sequence.steps.length; index++) {
       const step = sequence.steps[index];
       controller.signal.throwIfAborted();
       activeStepId = step.id;
@@ -225,23 +289,27 @@ export async function executeSequenceRun(
       event("sequence-step", `Starting step ${index + 1} of ${sequence.steps.length}: ${step.name}`,
         JSON.stringify({ kind: "sequence-step", state: "started", stepId: step.id, stepName: step.name, position: index }));
       const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Sequence: ${sequence.name}\n\nYou are executing step ${index + 1} of ${sequence.steps.length}. This step belongs only to this Sequence and is not an AgentTasker Task.\n\n# Current Step: ${step.name}\n\n${step.instructions}\n\n# Previous Step Outcomes\n\n${previousStepContext(outcomes)}\n\nThe same isolated worktree and branch are shared by every step in this Sequence. Existing files and commits in this worktree may have been produced by previous successful steps. Treat them as the durable workflow state and continue from them.\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final step and Sequence status. Report a truthful result about this step and any blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
-      runRepository.update(run.id, { terminationVerified: false });
-      const result = await executeCodex({
-        worktreePath: worktree.worktreePath,
-        prompt,
-        config: main,
-        outputSchemaPath,
-        timeoutMs,
-        signal: controller.signal,
-        pythonRuntime,
-        environment: projectEnvironment,
-        onEvent: (entry) => {
-          if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
-          if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);
-          else if (entry.type === "codex") event("codex", JSON.stringify(entry.event), JSON.stringify(entry.event));
-          else event(entry.type, JSON.stringify({ ...entry, sequenceStepId: step.id }));
-        },
-      });
+      const resumeThisStep = isValidationResume && index === resumeIndex;
+      if (resumeThisStep) event("resume", `Codex result reused for step ${index + 1}: ${step.name}.`);
+      runRepository.update(run.id, { terminationVerified: resumeThisStep });
+      const result = resumeThisStep
+        ? storedAgentResult(sourceSteps[index]?.result ?? null)
+        : await executeCodex({
+          worktreePath: worktree.worktreePath,
+          prompt,
+          config: main,
+          outputSchemaPath,
+          timeoutMs,
+          signal: controller.signal,
+          pythonRuntime,
+          environment: projectEnvironment,
+          onEvent: (entry) => {
+            if (entry.type === "started") runRepository.update(run.id, { codexPid: entry.pid, terminationVerified: false });
+            if (entry.type === "stdout" || entry.type === "stderr") event(entry.type, entry.text);
+            else if (entry.type === "codex") event("codex", JSON.stringify(entry.event), JSON.stringify(entry.event));
+            else event(entry.type, JSON.stringify({ ...entry, sequenceStepId: step.id }));
+          },
+        });
       runRepository.update(run.id, {
         codexPid: result.terminationVerified ? null : result.pid,
         terminationVerified: result.terminationVerified,
