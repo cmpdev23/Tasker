@@ -45,6 +45,11 @@ export const sequenceRunRepository = {
     return db.select().from(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId))
       .orderBy(asc(sequenceStepRuns.position)).all();
   },
+  listForRuns(runIds: string[]): SequenceStepRun[] {
+    if (!runIds.length) return [];
+    return db.select().from(sequenceStepRuns).where(inArray(sequenceStepRuns.runId, runIds))
+      .orderBy(asc(sequenceStepRuns.position)).all();
+  },
   get(runId: string, stepId: string): SequenceStepRun {
     const step = db.select().from(sequenceStepRuns).where(and(eq(sequenceStepRuns.runId, runId),
       eq(sequenceStepRuns.stepId, stepId))).get();
