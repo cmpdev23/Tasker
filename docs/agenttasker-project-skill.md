@@ -46,6 +46,8 @@ d'exécuter `agenttasker init`. Il guide un agent pour établir des instructions
 globales fondées sur le dépôt et des validations `[execution]` réellement
 disponibles, tout en gardant l'installation des dépendances désactivée tant que
 l'utilisateur ne l'a pas explicitement autorisée.
+Lorsqu’un workflow nécessite Python, il peut aussi déclarer une version minimale
+portable; le skill ne versionne jamais le chemin local de l’interpréteur.
 
 Il ne crée pas l’enregistrement local du Project dans SQLite et ne possède pas les
 Runs, la queue, les logs, les worktrees ou les intégrations locales.

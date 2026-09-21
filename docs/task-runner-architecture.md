@@ -251,6 +251,24 @@ les anciens Runs à événements textuels. `Run.exitCode` est explicitement le c
 **Codex** : zéro ne signifie pas que le build ou les autres validations ont réussi.
 Une commande sans résultat terminal ne devient jamais un succès par déduction.
 
+### Runtime Python
+
+`python_min_version` est une clé portable optionnelle de `[execution]`. Une valeur
+comme `"3.11"` exige cette version ou une version plus récente pour chaque Run ;
+l’absence de la clé laisse Python optionnel. Au démarrage effectif, avant le
+worktree, AgentTasker diagnostique `py -<version>` et `py -3` sous Windows, puis
+`python` et `python3`. Il conserve dans les événements du Run et son snapshot les
+commandes tentées, chemins d’interpréteurs et versions détectées, jamais les
+valeurs de l’environnement ni les secrets.
+
+L’interpréteur correspondant est résolu localement à chaque Run. Son dossier est
+préfixé au `PATH` transmis à Codex, à la préparation et aux validations, et son
+chemin est fourni dans `PYTHON`. Ainsi un worktree n’a pas besoin de contenir une
+installation Python et le launcher Windows reste utilisable. Les chemins absolus
+ne sont jamais écrits dans `.tasker/project.toml`; ils restent des diagnostics
+locaux du Run. Les overrides de Python par Task ou SequenceStep ne font pas partie
+du schéma V1.
+
 L’incident du 11 septembre 2026 (Run `b87c5b31…62af`) a confirmé ce besoin : Codex
 avait créé l’article et sa couverture, puis `npm run build` héritait du mode
 développement du serveur et échouait au prérendu avec `useContext`. Le même build

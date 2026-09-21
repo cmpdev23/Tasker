@@ -264,6 +264,9 @@ restent de l'état opérationnel SQLite dans `sequence_step_runs`.
 Les réglages d’exécution sont partagés par les Tasks du Project. AgentTasker transforme les
 noms de scripts en commandes déterministes du gestionnaire choisi; il ne stocke
 pas de chemins absolus vers Node ou npm et n’accepte pas de commande shell libre.
+`python_min_version` peut optionnellement déclarer une version Python minimale
+portable (par exemple `"3.11"`); le chemin de l’interpréteur reste résolu et
+historisé localement pour chaque Run.
 L’installation reste désactivée par défaut et doit être activée explicitement dans
 Settings pour un dépôt de confiance. Les overrides de ces réglages par Task restent
 une extension future.
