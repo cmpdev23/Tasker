@@ -71,7 +71,9 @@ Production runs with `npm run start -- --hostname 127.0.0.1 --port 5000` after b
 
 AgentTasker fournit aussi le skill versionné `$agenttasker-project` pour permettre à
 un agent de créer ou modifier correctement les instructions, Tasks, Sequences et
-réglages Codex d’un dépôt géré. Il peut être installé localement dans
+réglages Codex d’un dépôt géré. Après `agenttasker init`, son parcours `init.md`
+permet de finaliser les instructions globales et les validations d’exécution depuis
+les conventions réellement détectées dans le dépôt. Il peut être installé localement dans
 `.agents/skills/`, puis mis à jour depuis Git. Voir le
 [guide du skill AgentTasker](docs/agenttasker-project-skill.md).
 

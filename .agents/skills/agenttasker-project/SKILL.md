@@ -32,6 +32,8 @@ and leave the result reviewable in Git.
    existing `.tasker/` files. Never inspect real `.env*` files.
 2. Determine whether the user wants initialization, project-level configuration, a
    Task, a Sequence, or Codex agent settings. Load only the matching reference:
+   - a newly initialized repository that needs its durable instructions and
+     execution settings: [init.md](init.md)
    - initialization, instructions, Git, and validation defaults:
      [references/project.md](references/project.md)
    - autonomous Tasks and schedules: [references/tasks.md](references/tasks.md)
@@ -53,6 +55,11 @@ When `.tasker/` is absent and the user asks to initialize or configure AgentTask
 create the safe baseline described in `references/project.md`. Derive the project
 name from the repository and the base branch from Git when reliable. If either value
 cannot be determined without changing the intended result, ask one concise question.
+
+When `agenttasker init` has already created the baseline and the user asks to finish
+the base configuration, read [init.md](init.md). It specializes the durable project
+instructions and `[execution]` settings without changing Tasks, Sequences, agent
+configuration, Git publication, or local runtime state.
 
 When `.tasker/` already exists, never replace it wholesale. Modify only the files
 required by the request and preserve stable IDs and unrelated settings.

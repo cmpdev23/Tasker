@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { type Project } from "@db/schema";
 import {
   Frame,
@@ -15,6 +16,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -23,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useProjects } from "@/contexts/projects-context";
 import {
   DEFAULT_PROJECT_EXECUTION_SETTINGS,
   PACKAGE_MANAGERS,
@@ -42,6 +52,7 @@ import {
   SparklesIcon,
   TerminalSquareIcon,
   GitPullRequestDraftIcon,
+  Trash2Icon,
 } from "lucide-react";
 
 interface GitInspection {
@@ -67,10 +78,34 @@ export function ProjectSettingsForm({
   project: initialProject,
   onProjectUpdate,
 }: ProjectSettingsFormProps) {
+  const router = useRouter();
+  const { deleteProject } = useProjects();
   const [project, setProject] = useState<Project>(initialProject);
   const [repoPathInput, setRepoPathInput] = useState(
     initialProject.repositoryPath || ""
   );
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDeleteProject = async () => {
+    if (isDeletingProject) return;
+    setIsDeletingProject(true);
+    setDeleteError(null);
+    try {
+      await deleteProject(project.id);
+      setIsDeleteDialogOpen(false);
+      toast.success(`Projet « ${project.name} » supprimé.`);
+      router.replace("/");
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : "Impossible de supprimer le projet.";
+      setDeleteError(message);
+      toast.error(message);
+    } finally {
+      setIsDeletingProject(false);
+    }
+  };
   const [inspection, setInspection] = useState<GitInspection | null>(null);
   const [selectedDefaultBranch, setSelectedDefaultBranch] = useState<string>(
     initialProject.defaultBranch || "main"
@@ -981,6 +1016,91 @@ export function ProjectSettingsForm({
           )}
         </FramePanel>
       </Frame>
+
+      {/* 7. Danger zone Section */}
+      <Frame stacked spacing="sm" className="w-full border-destructive/30">
+        <FrameHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <FrameTitle className="text-destructive">Zone de danger</FrameTitle>
+            <FrameDescription>
+              Actions destructives et irréversibles pour ce projet.
+            </FrameDescription>
+          </div>
+        </FrameHeader>
+
+        <FramePanel className="p-0">
+          <dl className="flex flex-col">
+            <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium text-foreground">
+                  Supprimer ce projet
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Cette action efface le projet et son historique d’exécutions de la base locale AgentTasker. Le repository sur disque ne sera pas supprimé.
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => {
+                  setDeleteError(null);
+                  setIsDeleteDialogOpen(true);
+                }}
+                className="shrink-0 gap-1.5"
+              >
+                <Trash2Icon className="size-4" />
+                Supprimer le projet
+              </Button>
+            </div>
+          </dl>
+        </FramePanel>
+      </Frame>
+
+      <Dialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingProject) {
+            setIsDeleteDialogOpen(false);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <DialogContent showCloseButton={!isDeletingProject}>
+          <DialogHeader>
+            <DialogTitle>Supprimer le projet ?</DialogTitle>
+            <DialogDescription>
+              Cette action est irréversible. Le projet « {project.name} » et son historique d’exécutions seront supprimés d’AgentTasker. Le repository sur disque ne sera pas supprimé.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <p role="alert" className="text-sm text-destructive">
+              {deleteError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeletingProject}
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setDeleteError(null);
+              }}
+            >
+              Annuler
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isDeletingProject}
+              onClick={handleDeleteProject}
+            >
+              {isDeletingProject && <Loader2Icon className="size-4 animate-spin" />}
+              Supprimer le projet
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

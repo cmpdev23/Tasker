@@ -75,7 +75,12 @@ test("CLI initializes, installs, ignores logs and registers a repository idempot
     ".tasker/tasks",
     ".tasker/sequences",
     ".agents/skills/agenttasker-project/SKILL.md",
+    ".agents/skills/agenttasker-project/init.md",
   ]) assert.ok(fs.existsSync(path.join(repository, relativePath)), relativePath);
+  assert.match(
+    fs.readFileSync(path.join(repository, ".agents/skills/agenttasker-project/init.md"), "utf8"),
+    /configurer correctement AgentTasker pour ce\s+projet/,
+  );
   assert.match(fs.readFileSync(path.join(repository, ".tasker", "project.toml"), "utf8"), /name = "Sample CRM"/);
   assert.equal(fs.readFileSync(path.join(repository, ".tasker", "instructions.md"), "utf8"), "# Instructions du projet\n");
   assert.match(fs.readFileSync(path.join(repository, ".gitignore"), "utf8"), /^\/\.tasker\/logs\/$/m);

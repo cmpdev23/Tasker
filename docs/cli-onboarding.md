@@ -81,6 +81,12 @@ Options principales :
 gestionnaire de paquets à partir des lockfiles, mais laisse l’installation des
 dépendances, le push et la création de PR désactivés.
 
+Le skill installé contient également `init.md`, le parcours à demander à un agent
+après l'initialisation pour compléter les instructions globales et la section
+`[execution]` à partir du dépôt réel. Par exemple : « Utilise
+`$agenttasker-project` et son parcours `init.md` pour finaliser la configuration de
+base d'AgentTasker. »
+
 La règle suivante est ajoutée au `.gitignore` racine :
 
 ```gitignore

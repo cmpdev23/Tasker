@@ -27,6 +27,7 @@ les mises à jour distantes et appliquer explicitement une nouvelle version.
 ```text
 .agents/skills/agenttasker-project/
 ├── SKILL.md
+├── init.md
 ├── VERSION
 ├── agents/openai.yaml
 ├── references/
@@ -39,6 +40,12 @@ Le skill couvre exclusivement la configuration versionnée du dépôt :
 - `.tasker/tasks/`;
 - `.tasker/sequences/` et leurs SequenceSteps;
 - `.tasker/agents/`.
+
+`init.md` est le parcours spécialisé pour le premier réglage d'un dépôt qui vient
+d'exécuter `agenttasker init`. Il guide un agent pour établir des instructions
+globales fondées sur le dépôt et des validations `[execution]` réellement
+disponibles, tout en gardant l'installation des dépendances désactivée tant que
+l'utilisateur ne l'a pas explicitement autorisée.
 
 Il ne crée pas l’enregistrement local du Project dans SQLite et ne possède pas les
 Runs, la queue, les logs, les worktrees ou les intégrations locales.
