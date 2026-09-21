@@ -97,9 +97,11 @@ export function buildCodexPermissionProfile(
   const base = config.sandbox_mode === "read-only" ? ":read-only" : ":workspace";
   const roots = [...new Set(readableRoots.map((entry) => path.resolve(entry)))];
   const filesystem = roots.map((root) => `${JSON.stringify(root)} = "read"`).join(", ");
+  const networkEnabled = config.sandbox_mode === "workspace-write" &&
+    config.sandbox_workspace_write.network_access;
   const overrides = [
     `default_permissions=${JSON.stringify(id)}`,
-    `permissions.${id}={ extends = ${JSON.stringify(base)}, filesystem = { ${filesystem} } }`,
+    `permissions.${id}={ extends = ${JSON.stringify(base)}, filesystem = { ${filesystem} }, network = { enabled = ${networkEnabled} } }`,
   ];
   return { id, configOverrides: overrides };
 }

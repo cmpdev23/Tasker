@@ -46,6 +46,14 @@ test("app-server argv and per-turn sandbox honor configuration without bypass sh
   const profile = buildCodexPermissionProfile(config, [path.resolve("python")]);
   assert.equal(profile?.id, "agenttasker-run");
   assert.ok(profile?.configOverrides.some((value) => value.includes(JSON.stringify(path.resolve("python")))));
+  assert.ok(profile?.configOverrides.some((value) => value.includes("network = { enabled = false }")));
+
+  const workspaceProfile = buildCodexPermissionProfile({
+    ...config,
+    sandbox_mode: "workspace-write",
+    sandbox_workspace_write: { network_access: true },
+  }, [path.resolve("python")]);
+  assert.ok(workspaceProfile?.configOverrides.some((value) => value.includes("network = { enabled = true }")));
 });
 
 test("Python preflight executes the selected interpreter through the read-only permission profile", async t => {

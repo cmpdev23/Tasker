@@ -43,3 +43,7 @@
   le serveur avant un test réel. Le rechargement à chaud peut actualiser l’API et
   afficher une sauvegarde réussie tout en laissant le worker de fond sur l’ancien
   code; vérifier l’événement d’environnement et le snapshot du Run.
+- Lorsqu’AgentTasker remplace la sandbox d’un Run par un profil de permissions
+  nommé pour exposer des runtimes externes en lecture seule, recopier explicitement
+  la permission réseau résolue. Un profil étendant `:workspace` garde le réseau
+  désactivé par défaut, même si `sandbox_workspace_write.network_access` vaut vrai.

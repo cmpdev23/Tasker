@@ -307,8 +307,12 @@ Lorsqu’un runtime Python est retenu, App Server reçoit un profil de permissio
 modifiable; `sys.prefix`, `sys.base_prefix` et le répertoire Git commun du worktree
 reçoivent seulement un accès en lecture. AgentTasker ne transmet jamais le profil
 utilisateur complet, n’utilise pas `--add-dir` pour rendre Python modifiable et ne
-bascule pas en `danger-full-access`. `PYTHONDONTWRITEBYTECODE=1` évite les écritures
-de cache dans l’installation en lecture seule.
+bascule pas en `danger-full-access`. Le profil recopie explicitement l’autorisation
+réseau résolue du mode `workspace-write`; sans cette entrée, un profil nommé garde
+le réseau désactivé même lorsque `sandbox_workspace_write.network_access` vaut
+`true`. Le mode `read-only` conserve toujours le réseau désactivé.
+`PYTHONDONTWRITEBYTECODE=1` évite les écritures de cache dans l’installation en
+lecture seule.
 
 L’incident du 11 septembre 2026 (Run `b87c5b31…62af`) a confirmé ce besoin : Codex
 avait créé l’article et sa couverture, puis `npm run build` héritait du mode
