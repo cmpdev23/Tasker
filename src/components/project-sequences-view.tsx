@@ -54,6 +54,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
   const [mutating, setMutating] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
+  const [selectedStepRun, setSelectedStepRun] = useState<SequenceStepRun | null>(null);
   const [recovering, setRecovering] = useState(false);
   const [deletingBlocker, setDeletingBlocker] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
@@ -133,6 +134,16 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (!displayRun) return [];
     return stepRunsByRunId.get(displayRun.id) ?? [];
   }, [displayRun, stepRunsByRunId]);
+
+  function openRunInspector(run: Run) {
+    setSelectedStepRun(null);
+    setSelectedRun(run);
+  }
+
+  function openStepInspector(run: Run, stepRun: SequenceStepRun) {
+    setSelectedStepRun(stepRun);
+    setSelectedRun(run);
+  }
 
   const completedStepsCount = useMemo(() => {
     return displayStepRuns.filter((sr) => sr.status === "SUCCESS").length;
@@ -401,10 +412,10 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                       size="sm"
                       variant="outline"
                       className="h-7 gap-1 text-xs"
-                      onClick={() => setSelectedRun(displayRun)}
+                      onClick={() => openRunInspector(displayRun)}
                     >
                       <EyeIcon className="size-3" />
-                      Ouvrir l'inspecteur
+                      Ouvrir l’inspecteur
                     </Button>
                   </div>
                 </div>
@@ -553,11 +564,11 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                       </div>
 
                       <div className="flex shrink-0 items-center gap-1">
-                        {displayRun && (
+                        {displayRun && stepRun && (
                           <Button
                             size="icon-sm"
                             variant="ghost"
-                            onClick={() => setSelectedRun(displayRun)}
+                            onClick={() => openStepInspector(displayRun, stepRun)}
                             aria-label={`Inspecter l’exécution de ${step.name}`}
                             title="Ouvrir l’inspecteur"
                           >
@@ -810,13 +821,14 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
 
       {sequenceEditor !== undefined && <SequenceEditorDialog sequence={sequenceEditor} onClose={() => setSequenceEditor(undefined)} onSave={saveSequence} />}
       {stepEditor !== undefined && <SequenceStepEditorDialog step={stepEditor} onClose={() => setStepEditor(undefined)} onSave={saveStep} />}
-      {selectedRun && <TaskRunSheet key={selectedRun.id} projectId={project.id} initialRun={selectedRun}
+      {selectedRun && <TaskRunSheet key={`${selectedRun.id}:${selectedStepRun?.id ?? "run"}`} projectId={project.id} initialRun={selectedRun}
+        initialSequenceStep={selectedStepRun}
         rerunning={starting === (selectedRun.sequenceId || selectedRun.taskId)}
         resuming={resumingRunId === selectedRun.id}
         onRerun={sequences.some((sequence) => sequence.id === (selectedRun.sequenceId || selectedRun.taskId))
           ? () => void runSequence(selectedRun.sequenceId || selectedRun.taskId) : undefined}
         onResume={() => void resumeSequence(selectedRun.id)}
-        onClose={() => { setSelectedRun(null); setRefresh((value) => value + 1); }} />}
+        onClose={() => { setSelectedRun(null); setSelectedStepRun(null); setRefresh((value) => value + 1); }} />}
     </div>
   );
 }

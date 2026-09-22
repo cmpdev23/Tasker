@@ -23,8 +23,12 @@ persistance d’une version précise du protocole.
 
 Le Run Inspector doit présenter une timeline sémantique fidèle au flux reçu :
 une activité par item, un renderer adapté à son type, un résultat final visible,
-et un fallback sûr pour tout événement futur. Les événements de cycle de vie complets
-restent consultables dans le diagnostic technique, mais les fragments de streaming et
+et un fallback sûr pour tout événement futur. Le Sheet présente d’abord les phases
+du pipeline dans leur ordre réel : préparation de l’environnement, travail Codex,
+validation des commandes, vérification/finalisation Git, publication éventuelle,
+puis résultat. La section « Activité » est réservée aux événements Codex; les
+événements de cycle de vie complets restent consultables dans le diagnostic technique,
+mais les fragments de streaming et
 leur duplication JSON-RPC ne sont ni des actions utilisateur ni des journaux utiles.
 Le moteur d’exécution ne dépend pas de l’interprétation UI.
 
@@ -204,8 +208,8 @@ une quantité de mémoire sans borne.
 
 ## Commandes gérées par AgentTasker
 
-La section « Installation et validations du projet » utilise les événements du
-runner, indépendamment du protocole Codex. Les événements `preparation` et
+Les sections « Commandes de préparation » et « Validations de l’étape » utilisent
+les événements du runner, indépendamment du protocole Codex. Les événements `preparation` et
 `validation` conservent leur message lisible et ajoutent un `rawPayload` avec
 `kind: "project-command"`, `phase`, `command`, `status`, `exitCode`, `durationMs`
 et `error`. Les états sont `running`, `success`, `failed`, `cancelled`, `timed-out`.

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Run, RunEvent, SequenceStepRun } from "@db/schema";
 import type { RunQueueEntry, RunQueueStatus } from "@/types/run-queue";
-import { AlertCircleIcon, Loader2Icon, Trash2Icon } from "lucide-react";
+import { AlertCircleIcon, ArrowLeftIcon, Loader2Icon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -12,20 +12,23 @@ import { ActivityFeed } from "@/components/run-inspector/activity-feed";
 import { isRelevantRunInspectorEvent, normalizeRunEvents } from "@/components/run-inspector/event-normalizer";
 import { changedFileCount } from "@/components/run-inspector/execution-config";
 import { ExecutionDetails } from "@/components/run-inspector/execution-details";
+import { CodexCompletion, EnvironmentPreparation, ExecutionPipeline, GitFinalization } from "@/components/run-inspector/execution-pipeline";
 import { RawEvents } from "@/components/run-inspector/raw-events";
 import { RunHeader } from "@/components/run-inspector/run-header";
 import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
 import { RunSummary } from "@/components/run-inspector/run-summary";
 import { projectCommandActivities } from "@/components/run-inspector/project-command-events";
 import { ProjectCommands } from "@/components/run-inspector/project-commands";
-import { SequenceProgress } from "@/components/run-inspector/sequence-progress";
+import { SequenceRunOverview } from "@/components/run-inspector/sequence-run-overview";
+import { sequenceStepEvents } from "@/components/run-inspector/sequence-step-events";
 
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
 export { RunIdCopy } from "@/components/run-inspector/run-id-copy";
 
-export function TaskRunSheet({ projectId, initialRun, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
+export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
   projectId: string;
   initialRun: Run;
+  initialSequenceStep?: SequenceStepRun | null;
   rerunning?: boolean;
   resuming?: boolean;
   onClose: () => void;
@@ -47,28 +50,57 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
   const [deleting, setDeleting] = useState(false);
   const [savingLogs, setSavingLogs] = useState(false);
   const [cancelRequested, setCancelRequested] = useState(initialRun.cancelRequested);
+  const [inspectedStepId, setInspectedStepId] = useState<string | null>(initialSequenceStep?.id ?? null);
   const [follow, setFollow] = useState(() => isActiveRun(initialRun.status));
   // The Sheet is mounted only after a client-side selection, so this does not
   // participate in the page's server/client hydration boundary.
   const [now, setNow] = useState(() => Date.now());
   const activityEnd = useRef<HTMLDivElement>(null);
   const runUrl = `/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(initialRun.id)}`;
-  const terminal = !isActiveRun(run.status);
-  const activities = useMemo(
-    () => normalizeRunEvents(events, { worktreePath: run.worktreePath, terminal }),
-    [events, run.worktreePath, terminal],
+  const inspectedStep = inspectedStepId
+    ? sequenceSteps.find((step) => step.id === inspectedStepId) ?? (initialSequenceStep?.id === inspectedStepId ? initialSequenceStep : null)
+    : null;
+  const globalSequenceInspector = run.kind === "SEQUENCE" && !inspectedStep;
+  const inspectedRun = useMemo<Run>(() => inspectedStep ? ({
+    ...run,
+    taskId: inspectedStep.stepId,
+    taskName: inspectedStep.stepName,
+    currentStepId: inspectedStep.stepId,
+    status: inspectedStep.status,
+    startedAt: inspectedStep.startedAt,
+    completedAt: inspectedStep.completedAt,
+    exitCode: inspectedStep.exitCode,
+    error: inspectedStep.error,
+    result: inspectedStep.result,
+    commitHash: inspectedStep.commitHash,
+    pushedAt: inspectedStep.pushedAt,
+    pullRequestUrl: inspectedStep.pullRequestUrl,
+    diff: inspectedStep.diff,
+  }) : run, [inspectedStep, run]);
+  const visibleEvents = useMemo(() => {
+    if (globalSequenceInspector) return [];
+    return inspectedStep ? sequenceStepEvents(events, inspectedStep.stepId) : events;
+  }, [events, globalSequenceInspector, inspectedStep]);
+  const terminal = !isActiveRun(inspectedRun.status);
+  const codexActivities = useMemo(
+    () => normalizeRunEvents(visibleEvents.filter((event) => event.type === "codex"), { worktreePath: inspectedRun.worktreePath, terminal }),
+    [visibleEvents, inspectedRun.worktreePath, terminal],
   );
-  const changedFiles = useMemo(() => changedFileCount(run.diff), [run.diff]);
-  const commands = useMemo(() => projectCommandActivities(events, run), [events, run]);
+  const changedFiles = useMemo(() => changedFileCount(inspectedRun.diff), [inspectedRun.diff]);
+  const commandEvents = globalSequenceInspector ? events : visibleEvents;
+  const commands = useMemo(() => projectCommandActivities(commandEvents, inspectedRun), [commandEvents, inspectedRun]);
   const failedCommand = commands.find(command => command.status === "failed" || command.status === "timed-out");
+  const failedStepCanResume = inspectedStep
+    ? inspectedStep.status === "FAILED" && inspectedStep.exitCode === 0
+    : sequenceSteps.some((step) => step.status === "FAILED" && step.exitCode === 0);
   const canResumeValidation = run.kind === "SEQUENCE" && run.status === "FAILED" && run.terminationVerified &&
-    Boolean(failedCommand) && sequenceSteps.some((step) => step.status === "FAILED" && step.exitCode === 0);
+    Boolean(failedCommand) && failedStepCanResume;
 
   useEffect(() => {
-    if (!isActiveRun(run.status)) return;
+    if (!isActiveRun(inspectedRun.status)) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [run.status]);
+  }, [inspectedRun.status]);
 
   useEffect(() => {
     let stopped = false;
@@ -114,8 +146,8 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
   }, [runUrl]);
 
   useEffect(() => {
-    if (follow && isActiveRun(run.status)) activityEnd.current?.scrollIntoView({ block: "end", behavior: "auto" });
-  }, [activities.length, events.length, follow, run.status]);
+    if (follow && isActiveRun(inspectedRun.status)) activityEnd.current?.scrollIntoView({ block: "end", behavior: "auto" });
+  }, [codexActivities.length, visibleEvents.length, follow, inspectedRun.status]);
 
   async function cancel() {
     if (cancelling || cancelRequested) return;
@@ -212,7 +244,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
     <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-4xl data-[side=right]:xl:max-w-5xl">
         <RunHeader
-          run={run}
+          run={inspectedRun}
           now={now}
           changedFiles={changedFiles}
           cancelling={cancelling}
@@ -221,13 +253,16 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
           rerunning={rerunning}
           resuming={resuming}
           savingLogs={savingLogs}
-          onCancel={cancel}
-          onDelete={isRemovableRun(run) ? () => void removeRun() : undefined}
-          onRerun={onRerun}
+          onCancel={inspectedStep ? undefined : cancel}
+          onDelete={!inspectedStep && isRemovableRun(run) ? () => void removeRun() : undefined}
+          onRerun={inspectedStep ? undefined : onRerun}
           onResume={canResumeValidation ? onResume : undefined}
-          onSaveLogs={saveLogs}
+          onSaveLogs={inspectedStep ? undefined : saveLogs}
+          scopeDescription={inspectedStep
+            ? `Étape ${inspectedStep.position + 1} de la séquence « ${run.taskName} »`
+            : globalSequenceInspector ? "Vue d’ensemble : progression, états, erreurs et informations techniques de la Sequence." : undefined}
         />
-        {run.status === "QUEUED" && queue && (
+        {!inspectedStep && run.status === "QUEUED" && queue && (
           <div className="shrink-0 border-b px-5 py-3 sm:px-7">
             <QueueStatusPanel
               queue={queue}
@@ -239,7 +274,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
             />
           </div>
         )}
-        {run.terminationVerified === false && (!isActiveRun(run.status) || run.error) && (
+        {!inspectedStep && run.terminationVerified === false && (!isActiveRun(run.status) || run.error) && (
           <div role="alert" className="flex shrink-0 gap-3 border-b border-destructive/30 bg-destructive/10 px-5 py-3 sm:px-7">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
             <div className="space-y-1">
@@ -264,7 +299,7 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-7 sm:py-6"
         >
           <div className="mx-auto max-w-3xl space-y-7">
-            {isActiveRun(run.status) && (
+            {isActiveRun(inspectedRun.status) && (
               <p className="text-xs text-muted-foreground">Vous pouvez fermer ce panneau : le Run continue sur le serveur AgentTasker.</p>
             )}
             {error && (
@@ -274,13 +309,33 @@ export function TaskRunSheet({ projectId, initialRun, rerunning = false, resumin
             )}
             {cancelError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{cancelError}</p>}
             {deleteError && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">{deleteError}</p>}
-            <RunSummary run={run} failedCommand={failedCommand} />
-            {run.kind === "SEQUENCE" && <SequenceProgress steps={sequenceSteps} />}
-            <ProjectCommands commands={commands} />
-            <ExecutionDetails run={run} />
-            <ActivityFeed activities={activities} loading={loading} active={isActiveRun(run.status)} follow={follow} onFollowChange={setFollow} />
-            <div ref={activityEnd} aria-hidden />
-            <RawEvents events={events} suppressedCount={suppressedEventCount} />
+            {globalSequenceInspector ? (
+              <SequenceRunOverview run={run} steps={sequenceSteps} commands={commands} onInspectStep={(step) => setInspectedStepId(step.id)} />
+            ) : (
+              <>
+                {run.kind === "SEQUENCE" && (
+                  <Button type="button" size="sm" variant="ghost" className="-ml-2" onClick={() => setInspectedStepId(null)}>
+                    <ArrowLeftIcon />Vue d’ensemble de la Sequence
+                  </Button>
+                )}
+                <ExecutionPipeline run={inspectedRun} commands={commands} sequenceStep={Boolean(inspectedStep)} />
+                <EnvironmentPreparation run={inspectedRun} commands={commands.filter((command) => command.phase === "preparation")} sequenceStep={Boolean(inspectedStep)} />
+                <section aria-labelledby="codex-execution-title" className="space-y-5">
+                  <div>
+                    <h2 id="codex-execution-title" className="text-sm font-medium">Lancement de l’agent Codex</h2>
+                    <p className="mt-1 text-sm leading-6 text-muted-foreground">Codex reçoit le prompt de l’étape et travaille dans le worktree isolé.</p>
+                  </div>
+                  <ActivityFeed activities={codexActivities} loading={loading} active={isActiveRun(inspectedRun.status) && inspectedRun.status === "RUNNING"} follow={follow} onFollowChange={setFollow} />
+                </section>
+                <div ref={activityEnd} aria-hidden />
+                <CodexCompletion run={inspectedRun} commands={commands} sequenceStep={Boolean(inspectedStep)} />
+                <ProjectCommands commands={commands.filter((command) => command.phase === "validation")} heading="Validations de l’étape" titleId="validation-commands-title" commandLabel="Validation" />
+                <GitFinalization run={inspectedRun} commands={commands} sequenceStep={Boolean(inspectedStep)} publicationBranch={inspectedStep?.publicationBranch} />
+                <RunSummary run={inspectedRun} failedCommand={failedCommand} />
+                <ExecutionDetails run={inspectedRun} />
+                <RawEvents events={visibleEvents} suppressedCount={inspectedStep ? 0 : suppressedEventCount} />
+              </>
+            )}
           </div>
         </main>
       </SheetContent>

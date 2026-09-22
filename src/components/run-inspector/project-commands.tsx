@@ -3,17 +3,22 @@ import type { ProjectCommandActivity } from "./project-command-events";
 const labels = { running: "En cours", success: "Réussie", failed: "Échec", cancelled: "Annulée",
   "timed-out": "Délai dépassé", interrupted: "Résultat non confirmé" } as const;
 
-export function ProjectCommands({ commands }: { commands: ProjectCommandActivity[] }) {
+export function ProjectCommands({ commands, heading = "Installation et validations du projet", titleId = "project-commands-title", commandLabel }: {
+  commands: ProjectCommandActivity[];
+  heading?: string;
+  titleId?: string;
+  commandLabel?: string;
+}) {
   if (!commands.length) return null;
   return (
-    <section aria-labelledby="project-commands-title" className="space-y-3">
-      <h2 id="project-commands-title" className="text-sm font-medium">Installation et validations du projet</h2>
+    <section aria-labelledby={titleId} className="space-y-3">
+      <h2 id={titleId} className="text-sm font-medium">{heading}</h2>
       {commands.map(command => {
         const failed = command.status === "failed" || command.status === "timed-out";
         return (
           <div key={command.id} className="rounded-md border px-3 py-2.5 text-xs">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="text-muted-foreground">{command.phase === "validation" ? "Validation" : "Installation"}</span>
+              <span className="text-muted-foreground">{commandLabel ?? (command.phase === "validation" ? "Validation" : "Installation")}</span>
               <code className="break-all">{command.command}</code>
               <span className={failed ? "font-medium text-destructive" : command.status === "success" ? "text-success" : "text-muted-foreground"}>{labels[command.status]}</span>
               <span className="text-muted-foreground">Code : {command.exitCode ?? "non disponible"}</span>

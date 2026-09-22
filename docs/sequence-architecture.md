@@ -172,7 +172,12 @@ La tab Sequences offre :
 - le choix entre une PR finale et des PR empilées après chaque étape avec commit;
 - le lancement manuel depuis la liste;
 - **Reprendre** après le cas précis d’un succès Codex suivi d’une validation échouée;
-- l’historique des Runs et le Run Inspector;
+- l’historique des Runs et le Run Inspector, avec une vue globale de la Sequence
+  qui présente la progression, les états agrégés, les erreurs, les vérifications
+  et les métadonnées techniques, sans mélanger les résultats ou événements Codex
+  d’une étape; une vue filtrée par étape depuis son icône d’inspection affiche
+  ensuite le journal détaillé et la même action **Reprendre** lorsqu’elle est
+  admissible;
 - une progression dédiée affichant chaque SequenceStepRun.
 
 Les définitions actives sont verrouillées pendant leur Run. Les mutations sont

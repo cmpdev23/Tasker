@@ -8,7 +8,7 @@ import { formatRunElapsed } from "./format";
 import { RunIdCopy } from "./run-id-copy";
 import { RunStatusBadge } from "./run-status-badge";
 
-export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, resuming, savingLogs, onCancel, onDelete, onRerun, onResume, onSaveLogs }: {
+export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, resuming, savingLogs, onCancel, onDelete, onRerun, onResume, onSaveLogs, scopeDescription }: {
   run: Run;
   now: number | null;
   changedFiles: number;
@@ -18,11 +18,12 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
   rerunning: boolean;
   resuming?: boolean;
   savingLogs?: boolean;
-  onCancel: () => void;
+  onCancel?: () => void;
   onDelete?: () => void;
   onRerun?: () => void;
   onResume?: () => void;
   onSaveLogs?: () => void;
+  scopeDescription?: string;
 }) {
   const config = resolvedExecutionConfig(run.resolvedConfig);
   const meta = [
@@ -46,6 +47,7 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
             <span aria-hidden>·</span>
             <RunIdCopy id={run.id} />
           </SheetDescription>
+          {scopeDescription && <p className="mt-1 text-xs text-muted-foreground">{scopeDescription}</p>}
           <p className="mt-3 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
             {meta.map((value, index) => <span className="whitespace-nowrap" key={value}>{index > 0 && <span className="mr-2" aria-hidden>·</span>}{value}</span>)}
           </p>
@@ -109,7 +111,7 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
               {run.status === "QUEUED" ? "Retirer de la file" : "Supprimer"}
             </Button>
           )}
-          {isActiveRun(run.status) && run.status !== "QUEUED" && (
+          {isActiveRun(run.status) && run.status !== "QUEUED" && onCancel && (
             <Button variant="destructive" size="sm" disabled={cancelling || cancelRequested} onClick={onCancel}>
               {cancelling || cancelRequested ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <SquareIcon data-icon="inline-start" />}
               {cancelRequested ? "Annulation demandée…" : "Annuler"}

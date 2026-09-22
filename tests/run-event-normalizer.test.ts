@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { RunEvent } from "../db/schema";
 import { isRelevantRunInspectorEvent, normalizeRunEvents, parseRunResult } from "../src/components/run-inspector/event-normalizer";
 import { changedFileCount, displayModel, resolvedExecutionConfig } from "../src/components/run-inspector/execution-config";
+import { sequenceStepEvents } from "../src/components/run-inspector/sequence-step-events";
 import { isRemovableRun, isRerunnableRun } from "../src/components/task-ui-utils";
 
 function event(id: number, type: string, payload: unknown, timestamp = `2026-09-10T12:00:${String(id).padStart(2, "0")}.000Z`): RunEvent {
@@ -63,6 +64,19 @@ test("historical transport duplicates and streaming fragments stay out of the in
   const activities = normalizeRunEvents([...noisyEvents, useful]);
   assert.equal(activities.length, 1);
   assert.equal(activities[0].kind, "agent-message");
+});
+
+test("a Sequence step inspector isolates its journal from the shared Run", () => {
+  const events = [
+    event(1, "sequence-step", { kind: "sequence-step", state: "started", stepId: "first" }),
+    event(2, "codex", { type: "turn.started" }),
+    event(3, "sequence-step", { kind: "sequence-step", state: "success", stepId: "first" }),
+    event(4, "sequence-step", { kind: "sequence-step", state: "started", stepId: "second" }),
+    event(5, "codex", { type: "turn.started" }),
+    event(6, "validation", { kind: "project-command", sequenceStepId: "second", phase: "validation", command: "npm run build", status: "failed", exitCode: 1, durationMs: 10, error: "build failed" }),
+  ];
+  assert.deepEqual(sequenceStepEvents(events, "first").map((entry) => entry.id), [1, 2, 3]);
+  assert.deepEqual(sequenceStepEvents(events, "second").map((entry) => entry.id), [4, 5, 6]);
 });
 
 test("run result and execution snapshot helpers tolerate structured and malformed data", () => {
