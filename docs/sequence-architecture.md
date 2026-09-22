@@ -128,6 +128,36 @@ Les instructions elles-mêmes restent dans `.tasker/`. Le Run fige au démarrage
 liste résolue des identifiants, noms et règles `expect_changes`, tandis que les
 événements et résultats constituent l’historique local.
 
+## Checkpoint portable inter-environnements
+
+SQLite reste l’historique détaillé local, mais une Sequence qui peut être reprise
+sur un autre ordinateur publie aussi un checkpoint volontairement réduit. Lorsque
+`[git].push = true`, le worker pousse après chaque étape `SUCCESS` sa branche de
+Run, puis met à jour `.tasker/state/sequences/<sequence-id>.toml` sur la branche
+distante dédiée `agenttasker/state`. Ce fichier ne modifie jamais le checkout de
+l’utilisateur ni la branche de base.
+
+Le checkpoint contient uniquement l’identité de la Sequence et du Run, la base
+Git, la branche et le commit vérifiés, ainsi que la liste ordonnée des étapes,
+leurs statuts certifiés, commits et URLs de PR. Il n’inclut jamais les logs, PID,
+chemins locaux, sorties Codex complètes, erreurs brutes ou secrets. Une mise à
+jour concurrente utilise une lease Git et est réessayée depuis l’état distant.
+
+Depuis un autre ordinateur, l’interface lit ce checkpoint et propose
+**Reprendre le checkpoint**. L’action est explicite : elle recrée un nouveau
+worktree depuis le commit distant vérifié et ne relance que le suffixe encore
+`PENDING`. Elle ne prend jamais automatiquement le relais d’un processus encore
+actif sur l’ordinateur source. Sans `git.push`, les Runs restent locaux et aucun
+checkpoint portable n’est publié.
+
+Les Runs créés avant cette capacité peuvent être migrés une fois depuis leur
+ordinateur d’origine avec `agenttasker sequence sync --id <sequence-id>` ou
+`agenttasker sequence sync --all`; `--dry-run` contrôle d’abord les coordonnées
+Git et l’éligibilité sans écrire sur le remote. La migration ne relance jamais
+Codex ni les validations. Si des étapes ont été ajoutées à la fin depuis un Run
+historique, son préfixe compatible est conservé et le nouveau suffixe est écrit
+comme `PENDING` dans le checkpoint portable.
+
 ## Cycle d’exécution
 
 1. `Run sequence` refuse une Sequence vide ou possédant déjà un Run actif.
@@ -141,6 +171,8 @@ liste résolue des identifiants, noms et règles `expect_changes`, tandis que le
    - les validations du Project sont exécutées;
    - le diff propre à l’étape est vérifié selon `expect_changes`;
    - le runner crée un commit d’étape et avance la base de l’étape suivante.
+   - si le push Git est activé, le runner pousse la branche de Run et son
+     checkpoint portable après l’étape certifiée.
 6. Selon `pull_request_strategy` et les réglages `[git]` du Project :
    - `after_sequence` pousse la branche du Run et crée une PR unique après la
      dernière étape réussie;

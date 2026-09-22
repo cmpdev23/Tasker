@@ -74,5 +74,20 @@ bounded continuation policy. Important analysis that later steps need should be
 written to a repository file when practical, because textual step summaries are
 bounded.
 
+## Portable checkpoints
+
+When the Project enables `[git].push`, AgentTasker publishes a reduced checkpoint
+after every certified successful step on the remote `agenttasker/state` branch at
+`.tasker/state/sequences/<sequence-id>.toml`. This is runner-owned state, not a
+file to create or edit manually as part of the Sequence definition. It contains
+only verified Git references and step progress so another machine can explicitly
+resume the remaining suffix. Logs, process IDs, machine paths, raw agent output
+and secrets always remain local.
+
+Older local histories can be migrated once from the machine that owns their
+SQLite database with `agenttasker sequence sync --id <sequence-id>` or `--all`.
+Run `--dry-run` first. The command verifies Git coordinates and never runs Codex
+or validations.
+
 Sequences currently run manually and inherit project preparation and validation.
 Do not add a schedule table or Task references.

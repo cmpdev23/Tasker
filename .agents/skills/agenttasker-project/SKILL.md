@@ -15,8 +15,9 @@ and leave the result reviewable in Git.
 - Work only on repository-owned configuration. AgentTasker's SQLite database owns
   local project registration, Runs, queue state, logs, process IDs, worktrees, and
   other runtime state.
-- Never write secrets, credentials, tokens, absolute machine paths, or runtime state
-  into `.tasker/`.
+- Never write secrets, credentials, tokens, absolute machine paths, or local runtime
+  state into `.tasker/`. The reduced portable Sequence checkpoint on the remote
+  `agenttasker/state` branch is runner-owned; agents must not create or edit it.
 - Do not add `.tasker/` to `.gitignore`; it is intended to be committed.
 - Do not invent unsupported Task fields such as references, agent overrides,
   per-Task validation, or per-Task Git settings. The current schema is narrower

@@ -43,6 +43,22 @@ export interface ContinueSequenceWorktreeOptions {
   onPrepared?: (worktree: RunWorktree) => void | Promise<void>;
 }
 
+/** Start a Sequence Run from a verified, remotely published portable checkpoint. */
+export interface ContinuePortableSequenceWorktreeOptions {
+  repoPath: string;
+  worktreesRoot: string;
+  runId: string;
+  taskId: string;
+  sourceRunId: string;
+  sourceBranch: string;
+  sourceBaseCommit: string;
+  sourceCommit: string;
+  remote: string;
+  baseBranch: string;
+  signal?: AbortSignal;
+  onPrepared?: (worktree: RunWorktree) => void | Promise<void>;
+}
+
 export interface RunWorktree {
   readonly repoPath: string;
   readonly worktreesRoot: string;
@@ -88,6 +104,7 @@ export interface DeleteRunArtifactsOptions {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TASK_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/;
+const SHA = /^[0-9a-f]{40,64}$/i;
 
 function contains(parent: string, candidate: string): boolean {
   const relative = path.relative(parent, candidate);
@@ -230,6 +247,47 @@ export async function continueSequenceWorktree(options: ContinueSequenceWorktree
     return worktree;
   } catch (cause) {
     throw Object.assign(new Error("Sequence continuation preparation failed; any partial branch/worktree was preserved.", { cause }), { worktree });
+  }
+}
+
+/** Recreate an isolated Run from a branch and commit recorded in the Git-backed state checkpoint. */
+export async function continuePortableSequenceWorktree(options: ContinuePortableSequenceWorktreeOptions): Promise<RunWorktree> {
+  const { signal, runId, taskId, sourceRunId, sourceBranch, sourceBaseCommit, sourceCommit, remote, baseBranch } = options;
+  signal?.throwIfAborted();
+  if (!UUID.test(runId) || !UUID.test(sourceRunId) || !TASK_ID.test(taskId)) throw new Error("Invalid portable Sequence continuation identity.");
+  const expectedSourceBranch = `tasker/run-${sourceRunId}-${taskId}`;
+  if (sourceBranch !== expectedSourceBranch || !SHA.test(sourceBaseCommit) || !SHA.test(sourceCommit)) {
+    throw new Error("The portable Sequence checkpoint Git coordinates are invalid.");
+  }
+  const repoPath = await fs.realpath((await git(options.repoPath, ["rev-parse", "--show-toplevel"], signal)).trim());
+  const worktreesRoot = await canonicalProspectivePath(path.resolve(options.worktreesRoot));
+  await ensureExternalRoot(repoPath, worktreesRoot, signal);
+  await fs.mkdir(worktreesRoot, { recursive: true });
+  if (await fs.realpath(/* turbopackIgnore: true */ worktreesRoot) !== worktreesRoot) throw new Error("Runtime directory changed during portable continuation.");
+  const trackingRef = `refs/remotes/${remote}/${sourceBranch}`;
+  await git(repoPath, ["fetch", "--no-tags", "--no-recurse-submodules", "--refmap=", "--", remote,
+    `+refs/heads/${sourceBranch}:${trackingRef}`], signal);
+  const sourceHead = (await git(repoPath, ["rev-parse", "--verify", `${trackingRef}^{commit}`], signal)).trim();
+  if (sourceHead !== sourceCommit) throw new Error("The remotely published Sequence branch no longer matches its checkpoint.");
+  const branch = `tasker/run-${runId}-${taskId}`;
+  const worktreePath = path.join(worktreesRoot, `run-${runId}-${taskId}`);
+  try {
+    await fs.lstat(worktreePath);
+    throw new Error("The portable continuation worktree path already exists.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const worktree: RunWorktree = { repoPath, worktreesRoot, worktreePath, branch, remote, baseBranch,
+    trackingRef, baseCommit: sourceCommit };
+  try {
+    await options.onPrepared?.(worktree);
+    signal?.throwIfAborted();
+    await fs.mkdir(worktreePath);
+    await git(repoPath, ["worktree", "add", "--no-track", "-b", branch, "--", worktreePath, sourceCommit], signal);
+    await verifyRunWorktree(worktree, signal);
+    return worktree;
+  } catch (cause) {
+    throw Object.assign(new Error("Portable Sequence continuation preparation failed; any partial branch/worktree was preserved.", { cause }), { worktree });
   }
 }
 

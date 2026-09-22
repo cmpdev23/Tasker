@@ -515,6 +515,12 @@ executes.
 
 Runtime state belongs in SQLite.
 
+The deliberately narrow exception is the portable Sequence checkpoint used for a
+manual cross-environment handoff. When `[git].push = true`, AgentTasker writes it
+to the remote-only `agenttasker/state` branch, never to the user's checkout or the
+base branch. It stores verified Git references and certified step progress, but
+not logs, PIDs, paths, complete agent output, or secrets; those remain local.
+
 The Git working tree should change only when the user intentionally
 changes versioned AgentTasker configuration or when a coding task
 modifies the project.
@@ -619,6 +625,7 @@ un coffre-fort système contre un processus local déjà compromis.
   Run history                                                         ✓
   Run events                                                          ✓
   SequenceStep Run state                                              ✓
+  Portable Sequence checkpoint          remote `agenttasker/state`
   Queue state                                                         ✓
   Scheduler runtime state                                             ✓
   Process/PID state                                                   ✓
@@ -811,7 +818,9 @@ For AgentTasker V1:
     state, and other runtime information.
 6.  Absolute machine-specific paths are never stored in versioned
     project configuration.
-7.  Runtime state must not generate routine Git changes.
+7.  Runtime state must not generate changes in the checkout or base branch; the
+    reduced, remote Sequence checkpoint is the explicit exception for a manual
+    cross-environment resume.
 8.  Secrets are never stored in `.tasker/`.
 9.  AgentTasker's UI edits the same `.tasker/` configuration that
     advanced users can edit manually.

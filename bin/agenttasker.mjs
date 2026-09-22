@@ -33,6 +33,7 @@ function usage() {
 
 Usage:
   agenttasker init [repository] [options]
+  agenttasker sequence sync [repository] (--id <sequence-id> | --all) [options]
 
 Options:
   --name <name>            Project name (defaults to the repository folder)
@@ -43,6 +44,12 @@ Options:
   --no-register            Do not register the project in the local app
   --help, -h               Show this help
 
+Sequence sync options:
+  --id <sequence-id>        Migrate one Sequence checkpoint
+  --all                     Migrate every eligible Sequence checkpoint
+  --dry-run                 Inspect eligibility without writing Git state
+  --database <path>         Local AgentTasker SQLite database (or DATABASE_PATH)
+
 From an AgentTasker source checkout, run npm link once. Then execute
 agenttasker init from the Git repository you want to configure.`);
 }
@@ -50,6 +57,7 @@ agenttasker init from the Git repository you want to configure.`);
 function parseArguments(argv) {
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") return { help: true };
   const command = argv[0];
+  if (command === "sequence") return parseSequenceArguments(argv.slice(1));
   if (command !== "init") throw new Error(`Unknown command: ${command}`);
   const options = { command, repository: ".", name: "", baseBranch: "", yes: false, skill: true, forceSkill: false, register: true };
   let repositorySet = false;
@@ -76,6 +84,31 @@ function parseArguments(argv) {
     } else throw new Error(`Unexpected argument: ${value}`);
   }
   if (options.forceSkill) options.skill = true;
+  return options;
+}
+
+function parseSequenceArguments(argv) {
+  if (argv[0] !== "sync") throw new Error(`Unknown sequence command: ${argv[0] || ""}`);
+  const options = { command: "sequence-sync", repository: ".", sequenceId: "", all: false, dryRun: false, database: "" };
+  let repositorySet = false;
+  for (let index = 1; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--id") {
+      const next = argv[++index];
+      if (!next || next.startsWith("-")) throw new Error("--id requires a Sequence identifier.");
+      options.sequenceId = next;
+    } else if (value === "--all") options.all = true;
+    else if (value === "--dry-run") options.dryRun = true;
+    else if (value === "--database") {
+      const next = argv[++index];
+      if (!next || next.startsWith("-")) throw new Error("--database requires a path.");
+      options.database = next;
+    } else if (value === "--help" || value === "-h") return { help: true };
+    else if (value.startsWith("-")) throw new Error(`Unknown option: ${value}`);
+    else if (!repositorySet) { options.repository = value; repositorySet = true; }
+    else throw new Error(`Unexpected argument: ${value}`);
+  }
+  if (Boolean(options.sequenceId) === options.all) throw new Error("Use exactly one of --id <sequence-id> or --all.");
   return options;
 }
 
@@ -238,11 +271,33 @@ async function init(options) {
   console.log(green("Ready."), "Open or refresh AgentTasker; the project will appear automatically.");
 }
 
+function sequenceSync(options) {
+  const repository = repositoryRoot(options.repository);
+  const database = options.database ? path.resolve(options.database) : process.env.DATABASE_PATH || path.join(appRoot, "agenttasker.db");
+  if (!fs.existsSync(database)) {
+    throw new Error(`Local AgentTasker database not found: ${database}. Pass --database <path> or set DATABASE_PATH.`);
+  }
+  const script = path.join(appRoot, "scripts", "sequence-sync.ts");
+  const args = ["--import", "tsx", script, "--repository", repository];
+  if (options.all) args.push("--all");
+  else args.push("--id", options.sequenceId);
+  if (options.dryRun) args.push("--dry-run");
+  const result = spawnSync(process.execPath, args, {
+    cwd: appRoot,
+    encoding: "utf8",
+    windowsHide: true,
+    env: { ...gitEnvironment(), DATABASE_PATH: database },
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.status !== 0) throw new Error((result.stderr || "Sequence checkpoint migration failed.").trim());
+}
+
 try {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) usage();
+  else if (options.command === "sequence-sync") sequenceSync(options);
   else await init(options);
 } catch (error) {
-  console.error(`\n${paint("31", "AgentTasker initialization failed:")} ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`\n${paint("31", "AgentTasker command failed:")} ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }

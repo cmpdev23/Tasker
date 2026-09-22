@@ -33,6 +33,14 @@ import { SequenceEditorDialog, SequenceStepEditorDialog } from "@/components/seq
 import { errorMessage, formatRunDate, isActiveRun, taskRequest } from "@/components/task-ui-utils";
 import { cn } from "@/lib/utils";
 
+interface PortableCheckpoint {
+  sequenceId: string;
+  runId: string;
+  status: "IN_PROGRESS" | "SUCCESS" | "FAILED" | "CANCELLED";
+  updatedAt: string;
+  steps: Array<{ id: string; status: string }>;
+}
+
 export function ProjectSequencesView(props: { project: Project; onNavigateToSettings?: () => void }) {
   return <SequencesView key={`${props.project.id}:${props.project.repositoryPath}`} {...props} />;
 }
@@ -58,9 +66,21 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const [recovering, setRecovering] = useState(false);
   const [deletingBlocker, setDeletingBlocker] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [portableCheckpoint, setPortableCheckpoint] = useState<PortableCheckpoint | null>(null);
+  const [portableCheckpointError, setPortableCheckpointError] = useState<string | null>(null);
+  const [resumingPortableCheckpoint, setResumingPortableCheckpoint] = useState(false);
   const startingRef = useRef(false);
   const baseUrl = `/api/projects/${encodeURIComponent(project.id)}`;
   const selectedSequence = sequences.find((sequence) => sequence.id === selectedSequenceId) ?? null;
+
+  useEffect(() => {
+    if (!selectedSequenceId) return;
+    const controller = new AbortController();
+    void taskRequest<{ checkpoint: PortableCheckpoint | null }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequenceId)}/checkpoint`, { signal: controller.signal })
+      .then((data) => { setPortableCheckpoint(data.checkpoint ?? null); setPortableCheckpointError(null); })
+      .catch((error) => { if (!controller.signal.aborted) setPortableCheckpointError(errorMessage(error)); });
+    return () => controller.abort();
+  }, [baseUrl, selectedSequenceId, refresh]);
 
   useEffect(() => {
     if (!project.repositoryPath) return;
@@ -241,6 +261,20 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     finally { setResumingRunId(null); }
   }
 
+  async function resumePortableCheckpoint() {
+    if (!selectedSequence || resumingPortableCheckpoint || selectedHasActiveRun) return;
+    setResumingPortableCheckpoint(true);
+    try {
+      const data = await taskRequest<{ run: Run }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/checkpoint/resume`, { method: "POST" });
+      if (!data?.run?.id) throw new Error("Réponse de reprise portable invalide.");
+      setSelectedRunIdForView(data.run.id);
+      setSelectedRun(data.run);
+      setRefresh((value) => value + 1);
+      toast.success("Checkpoint portable ajouté à la file : les étapes certifiées ne seront pas relancées.");
+    } catch (caught) { toast.error(errorMessage(caught)); }
+    finally { setResumingPortableCheckpoint(false); }
+  }
+
   async function reorderStep(index: number, direction: -1 | 1) {
     if (!selectedSequence || mutating) return;
     const target = index + direction;
@@ -372,6 +406,12 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                     : `${continuationStepCount} nouvelles étapes seront exécutées.`}
                 </p>
               )}
+              {portableCheckpoint && portableCheckpoint.status !== "SUCCESS" && (
+                <p className="mt-1 text-xs text-info">
+                  Checkpoint portable : {portableCheckpoint.steps.filter((step) => step.status === "SUCCESS").length}/{portableCheckpoint.steps.length} étapes certifiées · {formatRunDate(portableCheckpoint.updatedAt)}.
+                </p>
+              )}
+              {portableCheckpointError && <p className="mt-1 text-xs text-destructive">Checkpoint portable indisponible : {portableCheckpointError}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -388,6 +428,16 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                 )}
                 {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
               </Button>
+              {portableCheckpoint && portableCheckpoint.status !== "SUCCESS" && (
+                <Button
+                  variant="outline"
+                  disabled={selectedHasActiveRun || !!starting || resumingPortableCheckpoint}
+                  onClick={() => void resumePortableCheckpoint()}
+                >
+                  {resumingPortableCheckpoint ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
+                  Reprendre le checkpoint
+                </Button>
+              )}
               <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setSequenceEditor(selectedSequence)}>
                 <PencilIcon />Configurer
               </Button>

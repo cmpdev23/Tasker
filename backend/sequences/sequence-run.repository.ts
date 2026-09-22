@@ -4,6 +4,7 @@ import { db, sqlite } from "../../db/client";
 import { sequenceStepRuns, type SequenceStepRun } from "../../db/schema";
 import type { SequenceDefinition } from "../../src/types/sequences";
 import { NotFoundError } from "../errors";
+import type { PortableSequenceCheckpoint } from "./sequence-checkpoint.service";
 
 export const sequenceRunRepository = {
   initialize(runId: string, sequence: SequenceDefinition): SequenceStepRun[] {
@@ -59,6 +60,33 @@ export const sequenceRunRepository = {
           publicationBranch: completed.publicationBranch, pushedAt: completed.pushedAt,
           pullRequestUrl: completed.pullRequestUrl, diff: completed.diff,
         } : { id: randomUUID(), runId, sequenceId: sequence.id, stepId: step.id, stepName: step.name, position, status: "PENDING" };
+      })).run();
+      return this.list(runId);
+    }).immediate();
+  },
+  initializePortableCheckpoint(runId: string, sequence: SequenceDefinition, checkpoint: PortableSequenceCheckpoint): SequenceStepRun[] {
+    return sqlite.transaction(() => {
+      const completed = checkpoint.steps.filter((step) => step.status === "SUCCESS");
+      if (checkpoint.sequenceId !== sequence.id || checkpoint.steps.length !== sequence.steps.length ||
+          completed.length === 0 || completed.length >= sequence.steps.length ||
+          checkpoint.steps.some((step, index) => step.id !== sequence.steps[index]?.id || step.name !== sequence.steps[index]?.name) ||
+          checkpoint.steps.some((step, index) => index < completed.length ? step.status !== "SUCCESS" : step.status === "SUCCESS")) {
+        throw new Error("The portable checkpoint is not a compatible incomplete Sequence prefix.");
+      }
+      db.delete(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId)).run();
+      db.insert(sequenceStepRuns).values(sequence.steps.map((step, position) => {
+        const source = checkpoint.steps[position];
+        if (position < completed.length) {
+          return {
+            id: randomUUID(), runId, sequenceId: sequence.id, stepId: step.id, stepName: step.name, position,
+            status: "SUCCESS", startedAt: source.completedAt, completedAt: source.completedAt, exitCode: 0,
+            // Logs and agent output deliberately remain local. This bounded placeholder preserves prompt continuity.
+            result: JSON.stringify({ status: "SUCCESS", summary: "Completed in the portable Sequence checkpoint.", blocking_error: null }),
+            commitHash: source.commitHash, publicationBranch: source.publicationBranch,
+            pushedAt: source.publicationBranch ? source.completedAt : null, pullRequestUrl: source.pullRequestUrl,
+          };
+        }
+        return { id: randomUUID(), runId, sequenceId: sequence.id, stepId: step.id, stepName: step.name, position, status: "PENDING" };
       })).run();
       return this.list(runId);
     }).immediate();

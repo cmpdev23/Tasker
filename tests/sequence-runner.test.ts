@@ -215,6 +215,56 @@ test("a failed Sequence step stops every following step", { timeout: 60_000 }, a
   assert.ok(run.worktreePath && fs.existsSync(run.worktreePath), "failed Sequence work must be preserved");
 });
 
+test("a portable checkpoint resumes the unfinished Sequence from its pushed Run branch", { timeout: 60_000 }, async () => {
+  const { project, repo, sequence } = await sequenceFixture(true);
+  let sourceCalls = 0;
+  const sourceCodex: typeof runCodex = async (options) => {
+    sourceCalls++;
+    if (sourceCalls === 1) {
+      fs.writeFileSync(path.join(options.worktreePath, "portable-research.txt"), "durable checkpoint work");
+      const agentResult = { status: "SUCCESS" as const, summary: "Research complete", blocking_error: null };
+      return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+        lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+    }
+    const agentResult = { status: "FAILURE" as const, summary: "Source stopped", blocking_error: "Source stopped" };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: "Source stopped", agentResult, terminationVerified: true };
+  };
+  const source = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), sourceCodex);
+  assert.equal(fixture.runRepository.get(project.id, source.id).status, "FAILED");
+
+  const checkpoint = await sequenceRunService.portableCheckpoint(project.id, sequence.id);
+  assert.ok(checkpoint);
+  assert.equal(checkpoint!.status, "FAILED");
+  assert.deepEqual(checkpoint!.steps.map((step) => step.status), ["SUCCESS", "FAILED", "SKIPPED"]);
+  assert.equal(checkpoint!.runBranch, source.runBranch ?? `tasker/run-${source.id}-${sequence.id}`);
+  assert.equal(git(repo, "ls-remote", "--heads", "origin", `refs/heads/${checkpoint!.runBranch}`).split(/\s+/)[0], checkpoint!.checkpointCommit);
+
+  const resumed = await sequenceRunService.resumePortableCheckpoint(project.id, sequence.id);
+  assert.equal(resumed.resumeStage, "REMOTE_CHECKPOINT");
+  assert.deepEqual(sequenceRunRepository.list(resumed.id).map((step) => step.status), ["SUCCESS", "PENDING", "PENDING"]);
+  let resumedCalls = 0;
+  const resumedCodex: typeof runCodex = async (options) => {
+    resumedCalls++;
+    assert.equal(fs.readFileSync(path.join(options.worktreePath, "portable-research.txt"), "utf8"), "durable checkpoint work");
+    fs.writeFileSync(path.join(options.worktreePath, `portable-${resumedCalls}.txt`), "continued");
+    const agentResult = { status: "SUCCESS" as const, summary: "Continued", blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  const fakeFinalPublication: PublishRunWorktree = async (worktree, options) => ({
+    pushed: true, pushedAt: "2026-09-22T12:00:00.000Z", pullRequestUrl: null, pullRequestCreated: false,
+    branch: options.branch ?? worktree.branch,
+  });
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), resumedCodex, fakeFinalPublication);
+  assert.equal(resumedCalls, 2);
+  assert.equal(fixture.runRepository.get(project.id, resumed.id).status, "SUCCESS", fixture.runRepository.get(project.id, resumed.id).error ?? undefined);
+  const completedCheckpoint = await sequenceRunService.portableCheckpoint(project.id, sequence.id);
+  assert.equal(completedCheckpoint?.status, "SUCCESS");
+  assert.deepEqual(completedCheckpoint?.steps.map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
+});
+
 test("independent step PRs continue after one failure and restart from the base", { timeout: 60_000 }, async () => {
   const { project, repo, sequence: initialSequence, base } = await sequenceFixture(true);
   const sequence = await sequenceService.update(project.id, initialSequence.id, {

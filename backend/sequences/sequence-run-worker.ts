@@ -17,6 +17,7 @@ import {
   prepareRunWorktree,
   resumeRunWorktree,
   continueSequenceWorktree,
+  continuePortableSequenceWorktree,
   restoreIndependentSequenceStepWorktree,
   type RunGitResult,
   type RunWorktree,
@@ -37,6 +38,7 @@ import { publishRunWorktree } from "../git/run-publication.service";
 import { projectRuntimePreferenceService } from "../runs/project-runtime-preference.service";
 import { projectEnvironmentVariableService } from "../runs/project-environment-variable.service";
 import { createSecretRedactor } from "../runs/secret-redactor";
+import { publishSequenceCheckpointBranch, sequenceCheckpointService, type PortableSequenceCheckpoint } from "./sequence-checkpoint.service";
 
 function readProjectFile(repo: string, relative: string): string {
   const file = path.join(repo, relative);
@@ -80,6 +82,14 @@ function priorOutcomes(sequence: SequenceStepDefinition[], sourceSteps: Sequence
   });
 }
 
+function portableCheckpointFromRun(run: Run): PortableSequenceCheckpoint | null {
+  if (run.resumeStage !== "REMOTE_CHECKPOINT" || !run.resolvedConfig) return null;
+  try {
+    const value = JSON.parse(run.resolvedConfig) as { portableCheckpoint?: PortableSequenceCheckpoint };
+    return value.portableCheckpoint ?? null;
+  } catch { return null; }
+}
+
 export async function executeSequenceRun(
   run: Run,
   controller = new AbortController(),
@@ -95,6 +105,7 @@ export async function executeSequenceRun(
   let pythonRuntime: ReturnType<typeof projectExecutionRuntimeStatus>["python"] | undefined;
   let projectEnvironment: ProjectProcessEnvironment = {};
   let redact = (value: string) => value;
+  let syncPortableCheckpoint: ((status: PortableSequenceCheckpoint["status"]) => Promise<void>) | null = null;
   const event = (type: string, message: string, raw?: string) => runRepository.event(
     run.id,
     type,
@@ -170,16 +181,20 @@ export async function executeSequenceRun(
     if (!project.repositoryPath) throw new Error("Configure the project repository in Settings first.");
     const sequence = await sequenceService.get(run.projectId, run.sequenceId);
     if (!sequence.steps.length) throw new Error("The Sequence has no steps.");
+    const portableCheckpoint = portableCheckpointFromRun(run);
+    const isPortableContinuation = Boolean(portableCheckpoint);
     const sourceRun = run.resumeFromRunId ? runRepository.get(run.projectId, run.resumeFromRunId) : null;
     const isValidationResume = Boolean(sourceRun && run.resumeStage === "VALIDATING" && run.resumeStepId);
     const isContinuation = Boolean(sourceRun && run.resumeStage === "CONTINUING");
-    if (run.resumeFromRunId && !isValidationResume && !isContinuation) throw new Error("Unsupported Run resume state.");
-    const sourceSteps = sourceRun ? sequenceRunRepository.list(sourceRun.id) : [];
+    if ((run.resumeFromRunId && !isValidationResume && !isContinuation) || (run.resumeStage === "REMOTE_CHECKPOINT" && !portableCheckpoint)) {
+      throw new Error("Unsupported Run resume state.");
+    }
+    const sourceSteps = sourceRun ? sequenceRunRepository.list(sourceRun.id) : isPortableContinuation ? sequenceRunRepository.list(run.id) : [];
     const resumeIndex = isValidationResume ? sourceSteps.findIndex((step) => step.stepId === run.resumeStepId) : -1;
     if (isValidationResume && (resumeIndex < 0 || sourceSteps[resumeIndex].status !== "FAILED")) {
       throw new Error("The source Sequence Run no longer has the requested failed step.");
     }
-    if (isValidationResume || isContinuation) {
+    if (isValidationResume || isContinuation || isPortableContinuation) {
       const currentSteps = sequenceRunRepository.list(run.id);
       if (currentSteps.length !== sequence.steps.length || currentSteps.some((step, index) => step.stepId !== sequence.steps[index]?.id)) {
         throw new Error("The current Sequence definition changed after its continuation was queued.");
@@ -214,14 +229,19 @@ export async function executeSequenceRun(
     if (sourceRun && (sourceRun.baseRemote !== remote || sourceRun.baseBranch !== baseBranch)) {
       throw new Error("Git remote or base branch changed since the failed Run; validation resume refused.");
     }
+    if (portableCheckpoint && (portableCheckpoint.baseRemote !== remote || portableCheckpoint.baseBranch !== baseBranch)) {
+      throw new Error("Git remote or base branch changed since the portable checkpoint; continuation refused.");
+    }
     const independentSteps = sequence.pullRequestStrategy === "independent_after_each_step";
     const publishEachStep = (sequence.pullRequestStrategy === "after_each_step" || independentSteps) && gitSettings.createPullRequest;
     const continueAfterFailure = independentSteps && sequence.failurePolicy === "continue";
     if (independentSteps && (!gitSettings.push || !gitSettings.createPullRequest)) {
       throw new Error("Independent per-step pull requests require Project Git publication and GitHub PR creation.");
     }
-    const continuationIndex = isContinuation ? sourceSteps.length : -1;
-    previousPublicationBranch = isValidationResume || isContinuation
+    const continuationIndex = isContinuation ? sourceSteps.length : isPortableContinuation
+      ? sourceSteps.findIndex((step) => step.status !== "SUCCESS") : -1;
+    if (isPortableContinuation && continuationIndex <= 0) throw new Error("The portable checkpoint has no completed Sequence prefix.");
+    previousPublicationBranch = isValidationResume || isContinuation || isPortableContinuation
       ? sourceSteps.slice(0, isValidationResume ? resumeIndex : continuationIndex)
         .reduce<string | null>((branch, step) => step.publicationBranch ?? branch, baseBranch)
       : baseBranch;
@@ -280,6 +300,20 @@ export async function executeSequenceRun(
         },
       });
       event("resume", `Continuing from ${continuationIndex} completed step${continuationIndex === 1 ? "" : "s"}; Codex will run only the newly added steps.`);
+    } else if (isPortableContinuation && portableCheckpoint) {
+      worktree = await continuePortableSequenceWorktree({
+        repoPath: project.repositoryPath, worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"),
+        runId: run.id, taskId: sequence.id, sourceRunId: portableCheckpoint.runId,
+        sourceBranch: portableCheckpoint.runBranch, sourceBaseCommit: portableCheckpoint.baseCommit,
+        sourceCommit: portableCheckpoint.checkpointCommit, remote, baseBranch, signal: controller.signal,
+        onPrepared: (prepared) => {
+          runRepository.update(run.id, {
+            baseRemote: portableCheckpoint.baseRemote, baseBranch: portableCheckpoint.baseBranch,
+            baseCommit: portableCheckpoint.baseCommit, runBranch: prepared.branch, worktreePath: prepared.worktreePath,
+          });
+        },
+      });
+      event("resume", `Continuing from portable checkpoint after ${continuationIndex} completed step${continuationIndex === 1 ? "" : "s"}.`);
     } else {
       worktree = await prepareRunWorktree({
         repoPath: project.repositoryPath,
@@ -305,16 +339,25 @@ export async function executeSequenceRun(
 
     const outputSchemaPath = path.join(RUNNER_CONFIG.dataDirectory, "run-output.schema.json");
     fs.writeFileSync(outputSchemaPath, JSON.stringify(CODEX_RUN_OUTPUT_SCHEMA));
+    syncPortableCheckpoint = async (status) => {
+      if (!gitSettings.push || !worktree) return;
+      const head = await publishSequenceCheckpointBranch({ repoPath: worktree.worktreePath, remote, branch: worktree.branch, signal: controller.signal });
+      const currentRun = runRepository.get(run.projectId, run.id);
+      await sequenceCheckpointService.save({ repoPath: project.repositoryPath!, runtimeRoot: RUNNER_CONFIG.dataDirectory,
+        remote, sequence, run: currentRun, checkpointCommit: head, status, steps: sequenceRunRepository.list(run.id), signal: controller.signal });
+      event("checkpoint", `Portable checkpoint published after ${sequenceRunRepository.list(run.id).filter((step) => step.status === "SUCCESS").length} successful step(s).`);
+    };
+    if (!gitSettings.push) event("checkpoint", "Portable Sequence checkpoints are unavailable because Git push is disabled in Project Settings.");
     let stepBaseCommit = isValidationResume
       ? sourceSteps.slice(0, resumeIndex).reduce((commit, step) => step.commitHash ?? commit, worktree.baseCommit)
       : worktree.baseCommit;
     latestCommit = isValidationResume
       ? (stepBaseCommit === worktree.baseCommit ? null : stepBaseCommit)
-      : isContinuation ? sourceRun?.commitHash ?? null : null;
-    const outcomes: Array<{ step: SequenceStepDefinition; summary: string }> = independentSteps ? [] : isValidationResume || isContinuation
+      : isContinuation ? sourceRun?.commitHash ?? null : isPortableContinuation ? portableCheckpoint?.checkpointCommit ?? null : null;
+    const outcomes: Array<{ step: SequenceStepDefinition; summary: string }> = independentSteps ? [] : isValidationResume || isContinuation || isPortableContinuation
       ? priorOutcomes(sequence.steps, sourceSteps, isValidationResume ? resumeIndex : continuationIndex) : [];
 
-    for (let index = isValidationResume ? resumeIndex : isContinuation ? continuationIndex : 0; index < sequence.steps.length; index++) {
+    for (let index = isValidationResume ? resumeIndex : isContinuation || isPortableContinuation ? continuationIndex : 0; index < sequence.steps.length; index++) {
       const step = sequence.steps[index];
       try {
       controller.signal.throwIfAborted();
@@ -427,6 +470,7 @@ export async function executeSequenceRun(
         commitHash: gitResult.commitSha,
         diff: `${gitResult.status}\n${gitResult.diff}`,
       });
+      await syncPortableCheckpoint?.("IN_PROGRESS");
       if (!independentSteps) outcomes.push({ step, summary: redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed.") });
       event("sequence-step", `Step ${index + 1} succeeded: ${step.name}`,
         JSON.stringify({ kind: "sequence-step", state: "success", stepId: step.id, stepName: step.name,
@@ -501,6 +545,7 @@ export async function executeSequenceRun(
       });
       runRepository.update(run.id, { pushedAt: publication.pushedAt, pullRequestUrl: publication.pullRequestUrl });
     }
+    await syncPortableCheckpoint?.("SUCCESS");
     const cleanup = await cleanupSuccessfulWorktree(worktree, cleanupResult)
       .catch((error) => ({ removed: false, reason: String(error) }));
     event("cleanup", cleanup.removed
@@ -540,6 +585,8 @@ export async function executeSequenceRun(
       currentStepId: null,
       completedAt: new Date().toISOString(),
     });
+    try { await syncPortableCheckpoint?.(cancelled ? "CANCELLED" : "FAILED"); }
+    catch (checkpointError) { event("checkpoint", `Portable checkpoint could not be updated: ${redact(checkpointError instanceof Error ? checkpointError.message : String(checkpointError))}`); }
     event("status", `${cancelled ? "Sequence cancelled" : "Sequence failed"}: ${message}. Existing worktree and branch preserved.`);
   } finally {
     clearInterval(cancellation);

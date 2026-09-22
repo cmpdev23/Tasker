@@ -95,6 +95,30 @@ La règle suivante est ajoutée au `.gitignore` racine :
 
 Le reste de `.tasker/` et le skill demeurent versionnés.
 
+## Migrer l’avancement local des Sequences
+
+Après une mise à niveau qui introduit les checkpoints portables, les anciens Runs
+restent dans SQLite sur l’ordinateur qui les a exécutés. Depuis cet ordinateur,
+publier un aperçu sans modifier Git :
+
+```powershell
+agenttasker sequence sync --all --dry-run
+```
+
+Puis publier une Sequence vérifiée ou toutes les Sequences éligibles :
+
+```powershell
+agenttasker sequence sync --id assurance-invalidite-metier
+agenttasker sequence sync --all
+```
+
+La commande doit accéder à la même base SQLite que l’application. Elle utilise
+`DATABASE_PATH` lorsqu’elle est défini; sinon elle cherche `agenttasker.db` dans
+le clone AgentTasker. Passer `--database <chemin>` lorsque la base est ailleurs.
+Elle refuse les Runs actifs, non vérifiés ou incompatibles, exige que le push Git
+soit activé dans les Settings du Project, et ne lance jamais Codex ni les
+validations. Le checkpoint est publié sur la branche distante `agenttasker/state`.
+
 ## Enregistrement local
 
 La CLI n’écrit jamais directement dans SQLite. Elle crée une demande JSON atomique

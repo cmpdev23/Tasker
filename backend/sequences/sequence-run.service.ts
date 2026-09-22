@@ -3,6 +3,11 @@ import { runRepository } from "../runs/run.repository";
 import { logRunDebug } from "../runs/run-logger";
 import { sequenceRunRepository } from "./sequence-run.repository";
 import { sequenceService } from "./sequence.service";
+import { projectService } from "../projects/project.service";
+import { parseProjectGitSettings } from "../tasker/project-git";
+import { sequenceCheckpointService, type PortableSequenceCheckpoint } from "./sequence-checkpoint.service";
+import fs from "node:fs";
+import path from "node:path";
 
 export const sequenceRunService = {
   async enqueue(projectId: string, sequenceId: string) {
@@ -64,6 +69,36 @@ export const sequenceRunService = {
     const resumed = runRepository.createSequenceValidationResume(source, failed.stepId);
     sequenceRunRepository.initializeValidationResume(resumed.id, source.id, failed.stepId);
     return resumed;
+  },
+  async portableCheckpoint(projectId: string, sequenceId: string): Promise<PortableSequenceCheckpoint | null> {
+    const [project, sequence] = await Promise.all([projectService.getProjectById(projectId), sequenceService.get(projectId, sequenceId)]);
+    if (!project.repositoryPath) throw new ConflictError("Configure the project repository in Settings first.");
+    const projectToml = fs.readFileSync(path.join(project.repositoryPath, ".tasker", "project.toml"), "utf8");
+    const git = parseProjectGitSettings(projectToml);
+    const checkpoint = await sequenceCheckpointService.load(project.repositoryPath, git.remote, sequence.id);
+    return checkpoint;
+  },
+  async resumePortableCheckpoint(projectId: string, sequenceId: string) {
+    const sequence = await sequenceService.get(projectId, sequenceId);
+    if (!sequence.steps.length) throw new ConflictError("Ajoutez au moins une étape avant de reprendre cette Sequence.");
+    if (runRepository.hasActiveSequence(projectId, sequenceId)) {
+      throw new ConflictError("Cette Sequence possède déjà un Run actif ou en attente.");
+    }
+    const checkpoint = await this.portableCheckpoint(projectId, sequenceId);
+    if (!checkpoint) throw new ConflictError("Aucun checkpoint portable n’a été trouvé pour cette Sequence.");
+    if (checkpoint.status === "SUCCESS") throw new ConflictError("Le checkpoint portable indique que cette Sequence est déjà terminée.");
+    const completed = checkpoint.steps.filter((step) => step.status === "SUCCESS");
+    if (!completed.length || completed.length >= sequence.steps.length) {
+      throw new ConflictError("Le checkpoint portable ne contient aucune étape incomplète à reprendre.");
+    }
+    const run = runRepository.createSequence(projectId, sequence.id, sequence.name);
+    runRepository.update(run.id, {
+      resumeStage: "REMOTE_CHECKPOINT",
+      resolvedConfig: JSON.stringify({ portableCheckpoint: checkpoint }),
+    });
+    sequenceRunRepository.initializePortableCheckpoint(run.id, sequence, checkpoint);
+    runRepository.event(run.id, "resume", `Portable checkpoint queued from Run ${checkpoint.runId}; ${completed.length} completed step${completed.length === 1 ? "" : "s"} retained.`);
+    return runRepository.get(projectId, run.id);
   },
 };
 

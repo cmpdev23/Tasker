@@ -110,9 +110,9 @@ toujours inspecter le diff produit avant de le committer dans le dépôt cible.
 
 ## Maintenance
 
-Le schéma applicatif réel demeure la source de vérité. La version 1.4.0 documente
-aussi les PR indépendantes de Sequence et leur politique bornée de poursuite après
-échec. Lorsqu’une évolution modifie
+Le schéma applicatif réel demeure la source de vérité. La version 1.7.0 documente
+aussi la migration contrôlée de l’historique local vers un checkpoint portable de
+Sequence. Lorsqu’une évolution modifie
 durablement `.tasker/`, mettre à jour dans la même livraison les références du skill,
 sa version et ce document. Le validateur structurel du `skill-creator` vérifie le
 paquet, mais les exemples doivent aussi être confrontés aux parseurs et sérialiseurs
