@@ -2,12 +2,18 @@
 
 import { useState } from "react";
 import { Loader2Icon } from "lucide-react";
-import type { SequenceDefinition, SequenceInput, SequenceStepDefinition, SequenceStepInput } from "@/types/sequences";
-import { DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY, type SequencePullRequestStrategy } from "@/types/sequences";
+import type { SequenceDefinition, SequenceFailurePolicy, SequenceInput, SequenceStepDefinition, SequenceStepInput } from "@/types/sequences";
+import {
+  DEFAULT_SEQUENCE_FAILURE_POLICY,
+  DEFAULT_SEQUENCE_MAX_CONSECUTIVE_FAILURES,
+  DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY,
+  type SequencePullRequestStrategy,
+} from "@/types/sequences";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/components/task-ui-utils";
 
@@ -20,6 +26,12 @@ export function SequenceEditorDialog({ sequence, onClose, onSave }: {
   const [pullRequestStrategy, setPullRequestStrategy] = useState<SequencePullRequestStrategy>(
     sequence?.pullRequestStrategy ?? DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY
   );
+  const [failurePolicy, setFailurePolicy] = useState<SequenceFailurePolicy>(
+    sequence?.failurePolicy ?? DEFAULT_SEQUENCE_FAILURE_POLICY,
+  );
+  const [maxConsecutiveFailures, setMaxConsecutiveFailures] = useState(
+    sequence?.maxConsecutiveFailures ?? DEFAULT_SEQUENCE_MAX_CONSECUTIVE_FAILURES,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +42,7 @@ export function SequenceEditorDialog({ sequence, onClose, onSave }: {
     try {
       if (!name.trim()) throw new Error("Le nom de la Sequence est obligatoire.");
       setSaving(true);
-      await onSave({ name: name.trim(), pullRequestStrategy }, sequence?.id);
+      await onSave({ name: name.trim(), pullRequestStrategy, failurePolicy, maxConsecutiveFailures }, sequence?.id);
     } catch (caught) { setError(errorMessage(caught)); }
     finally { setSaving(false); }
   }
@@ -63,8 +75,41 @@ export function SequenceEditorDialog({ sequence, onClose, onSave }: {
                 onChange={() => setPullRequestStrategy("after_each_step")} />
               <span>Après chaque étape<span className="mt-0.5 block text-xs text-muted-foreground">Chaque étape qui produit un commit reçoit sa propre PR empilée. Les PR déjà créées restent disponibles si une étape suivante échoue.</span></span>
             </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm">
+              <input type="radio" name="pull-request-strategy" value="independent_after_each_step"
+                className="mt-1 accent-primary" checked={pullRequestStrategy === "independent_after_each_step"}
+                onChange={() => setPullRequestStrategy("independent_after_each_step")} />
+              <span>PR indépendante après chaque étape<span className="mt-0.5 block text-xs text-muted-foreground">Chaque étape repart de la branche de base et crée sa propre PR. Aucun merge des PR précédentes n’est requis pour lancer la suivante.</span></span>
+            </label>
             <p className="text-xs text-muted-foreground">La publication doit aussi être activée dans Project Settings → Git publication.</p>
           </fieldset>
+          {pullRequestStrategy === "independent_after_each_step" && (
+            <fieldset disabled={saving} className="grid gap-2">
+              <legend className="text-sm font-medium">En cas d’échec</legend>
+              <Select value={failurePolicy} onValueChange={(value) => setFailurePolicy(value as SequenceFailurePolicy)}>
+                <SelectTrigger id="sequence-failure-policy" className="w-full">
+                  <SelectValue>{failurePolicy === "stop" ? "Arrêter la Sequence" : "Passer à l’étape suivante"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" alignItemWithTrigger={false}>
+                  <SelectItem value="stop">Arrêter la Sequence</SelectItem>
+                  <SelectItem value="continue">Passer à l’étape suivante</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {failurePolicy === "stop"
+                  ? "Option prudente : les étapes restantes ne démarrent pas."
+                  : "L’étape échouée est enregistrée, puis le worker repart de la branche de base pour la suivante."}
+              </p>
+              {failurePolicy === "continue" && (
+                <label className="grid max-w-sm gap-1 text-sm">
+                  Arrêter après combien d’échecs consécutifs ?
+                  <Input type="number" min={1} max={20} value={maxConsecutiveFailures}
+                    onChange={(event) => setMaxConsecutiveFailures(Number(event.target.value))} />
+                  <span className="text-xs text-muted-foreground">Par défaut : 2. Une étape réussie remet le compteur à zéro.</span>
+                </label>
+              )}
+            </fieldset>
+          )}
           {error && <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" disabled={saving} onClick={onClose}>Annuler</Button>

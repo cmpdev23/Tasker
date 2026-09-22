@@ -41,6 +41,28 @@ export const sequenceRunRepository = {
       return this.list(runId);
     }).immediate();
   },
+  initializeContinuation(runId: string, sourceRunId: string, sequence: SequenceDefinition): SequenceStepRun[] {
+    return sqlite.transaction(() => {
+      const source = this.list(sourceRunId);
+      if (!source.length || source.length >= sequence.steps.length || source.some((step, index) =>
+        step.status !== "SUCCESS" || step.stepId !== sequence.steps[index]?.id ||
+        step.stepName !== sequence.steps[index]?.name)) {
+        throw new Error("The completed Sequence Run is not a compatible prefix of the current definition.");
+      }
+      db.delete(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId)).run();
+      db.insert(sequenceStepRuns).values(sequence.steps.map((step, position) => {
+        const completed = source[position];
+        return completed ? {
+          id: randomUUID(), runId, sequenceId: sequence.id, stepId: step.id, stepName: step.name, position,
+          status: "SUCCESS", startedAt: completed.startedAt, completedAt: completed.completedAt,
+          exitCode: completed.exitCode, result: completed.result, commitHash: completed.commitHash,
+          publicationBranch: completed.publicationBranch, pushedAt: completed.pushedAt,
+          pullRequestUrl: completed.pullRequestUrl, diff: completed.diff,
+        } : { id: randomUUID(), runId, sequenceId: sequence.id, stepId: step.id, stepName: step.name, position, status: "PENDING" };
+      })).run();
+      return this.list(runId);
+    }).immediate();
+  },
   list(runId: string): SequenceStepRun[] {
     return db.select().from(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId))
       .orderBy(asc(sequenceStepRuns.position)).all();

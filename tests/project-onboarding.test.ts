@@ -71,6 +71,7 @@ test("CLI initializes, installs, ignores logs and registers a repository idempot
   for (const relativePath of [
     ".tasker/project.toml",
     ".tasker/instructions.md",
+    ".tasker/LESSONS.md",
     ".tasker/agents/main.toml",
     ".tasker/tasks",
     ".tasker/sequences",
@@ -82,13 +83,16 @@ test("CLI initializes, installs, ignores logs and registers a repository idempot
     /configurer correctement AgentTasker pour ce\s+projet/,
   );
   assert.match(fs.readFileSync(path.join(repository, ".tasker", "project.toml"), "utf8"), /name = "Sample CRM"/);
-  assert.equal(fs.readFileSync(path.join(repository, ".tasker", "instructions.md"), "utf8"), "# Instructions du projet\n");
+  assert.match(fs.readFileSync(path.join(repository, ".tasker", "instructions.md"), "utf8"), /\.tasker\/LESSONS\.md/);
+  assert.match(fs.readFileSync(path.join(repository, ".tasker", "LESSONS.md"), "utf8"), /mémoire opérationnelle versionnée/i);
   assert.match(fs.readFileSync(path.join(repository, ".gitignore"), "utf8"), /^\/\.tasker\/logs\/$/m);
 
   fs.writeFileSync(path.join(repository, ".tasker", "instructions.md"), "# Custom instructions\n", "utf8");
+  fs.writeFileSync(path.join(repository, ".tasker", "LESSONS.md"), "# Custom lessons\n", "utf8");
   const second = runCli("--yes", "--name", "Ignored replacement");
   assert.equal(second.status, 0, second.stderr);
   assert.equal(fs.readFileSync(path.join(repository, ".tasker", "instructions.md"), "utf8"), "# Custom instructions\n");
+  assert.equal(fs.readFileSync(path.join(repository, ".tasker", "LESSONS.md"), "utf8"), "# Custom lessons\n");
   assert.equal((fs.readFileSync(path.join(repository, ".gitignore"), "utf8").match(/\/\.tasker\/logs\//g) ?? []).length, 1);
   assert.equal(fs.readdirSync(path.join(dataDirectory, "project-registrations")).filter((name) => name.endsWith(".json")).length, 1);
 

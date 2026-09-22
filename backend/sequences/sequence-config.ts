@@ -1,12 +1,16 @@
 import { ValidationError } from "../errors";
 import type {
   SequenceInput,
+  SequenceFailurePolicy,
   SequencePullRequestStrategy,
   SequenceStepDefinition,
   SequenceStepInput,
 } from "../../src/types/sequences";
 import {
   DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY,
+  DEFAULT_SEQUENCE_FAILURE_POLICY,
+  DEFAULT_SEQUENCE_MAX_CONSECUTIVE_FAILURES,
+  SEQUENCE_FAILURE_POLICIES,
   SEQUENCE_PULL_REQUEST_STRATEGIES,
 } from "../../src/types/sequences";
 import { quoteToml, readBoolean, readInteger, readString } from "../tasks/toml";
@@ -21,6 +25,8 @@ export interface SequenceConfig {
   id: string;
   name: string;
   pullRequestStrategy: SequencePullRequestStrategy;
+  failurePolicy: SequenceFailurePolicy;
+  maxConsecutiveFailures: number;
   stepIds: string[];
 }
 
@@ -53,17 +59,84 @@ function validName(value: unknown, label: string): string {
   return value.trim();
 }
 
+function readStringArray(lines: string[], index: number, token: string, label: string): { value: string; end: number } {
+  const source = [token, ...lines.slice(index + 1)].join("\n");
+  let value = "";
+  let quote: '"' | "'" | null = null;
+  let depth = 0;
+  let seenArray = false;
+
+  for (let position = 0; position < source.length; position++) {
+    const character = source[position];
+    if (quote === '"') {
+      value += character;
+      if (character === "\\") {
+        if (position + 1 < source.length) value += source[++position];
+      } else if (character === '"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      value += character;
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      value += character;
+      continue;
+    }
+    if (character === "#") {
+      while (position + 1 < source.length && source[position + 1] !== "\n") position++;
+      continue;
+    }
+    if (character === "[") {
+      depth++;
+      seenArray = true;
+      value += character;
+      continue;
+    }
+    if (character === "]") {
+      depth--;
+      value += character;
+      if (!seenArray || depth < 0) break;
+      if (depth === 0) {
+        let remainder = position + 1;
+        while (remainder < source.length && /[ \t\r]/.test(source[remainder])) remainder++;
+        if (source[remainder] === "#") {
+          while (remainder < source.length && source[remainder] !== "\n") remainder++;
+        }
+        if (remainder < source.length && source[remainder] !== "\n") {
+          throw new ValidationError(`Invalid ${label} value after steps array.`);
+        }
+        return { value, end: index + source.slice(0, position).split("\n").length - 1 };
+      }
+      continue;
+    }
+    value += character;
+  }
+  throw new ValidationError("steps must be a TOML array of strings.");
+}
+
 export function validateSequenceInput(input: unknown): SequenceInput {
-  const data = object(input, "Sequence", ["name", "pullRequestStrategy"]);
+  const data = object(input, "Sequence", ["name", "pullRequestStrategy", "failurePolicy", "maxConsecutiveFailures"]);
   if (data.pullRequestStrategy !== undefined &&
       !SEQUENCE_PULL_REQUEST_STRATEGIES.includes(data.pullRequestStrategy as SequencePullRequestStrategy)) {
-    throw new ValidationError("pullRequestStrategy must be after_sequence or after_each_step.");
+    throw new ValidationError("pullRequestStrategy must be after_sequence, after_each_step, or independent_after_each_step.");
+  }
+  if (data.failurePolicy !== undefined && !SEQUENCE_FAILURE_POLICIES.includes(data.failurePolicy as SequenceFailurePolicy)) {
+    throw new ValidationError("failurePolicy must be stop or continue.");
+  }
+  if (data.maxConsecutiveFailures !== undefined && (!Number.isInteger(data.maxConsecutiveFailures) ||
+      (data.maxConsecutiveFailures as number) < 1 || (data.maxConsecutiveFailures as number) > 20)) {
+    throw new ValidationError("maxConsecutiveFailures must be an integer between 1 and 20.");
   }
   return {
     name: validName(data.name, "Sequence name"),
     ...(data.pullRequestStrategy === undefined
       ? {}
       : { pullRequestStrategy: data.pullRequestStrategy as SequencePullRequestStrategy }),
+    ...(data.failurePolicy === undefined ? {} : { failurePolicy: data.failurePolicy as SequenceFailurePolicy }),
+    ...(data.maxConsecutiveFailures === undefined ? {} : { maxConsecutiveFailures: data.maxConsecutiveFailures as number }),
   };
 }
 
@@ -97,10 +170,12 @@ function parseRoot(content: string, label: string, allowed: string[]): Record<st
       throw new ValidationError(`Unknown or duplicate ${label} key: ${key}.`);
     }
     if (key === "steps") {
-      const array = ARRAY.exec(token);
-      if (!array) throw new ValidationError("steps must be a TOML array of strings on one line.");
+      const parsed = readStringArray(lines, index, token, label);
+      const array = ARRAY.exec(parsed.value);
+      if (!array) throw new ValidationError("steps must be a TOML array of strings.");
       root[key] = [...array[1].matchAll(new RegExp(STRING_TOKEN, "g"))]
         .map((item) => readString(`value = ${item[0]}`, "value"));
+      index = parsed.end;
     } else {
       if (!SCALAR.test(token)) throw new ValidationError(`Invalid TOML value for ${key}.`);
       const source = `${key} = ${token}`;
@@ -112,7 +187,7 @@ function parseRoot(content: string, label: string, allowed: string[]): Record<st
 
 export function parseSequenceConfig(content: string, id: string): SequenceConfig {
   validateSequenceId(id);
-  const root = parseRoot(content, "sequence.toml", ["version", "id", "name", "pull_request_strategy", "steps"]);
+  const root = parseRoot(content, "sequence.toml", ["version", "id", "name", "pull_request_strategy", "failure_policy", "max_consecutive_failures", "steps"]);
   if (root.version !== 1 || root.id !== id || !Array.isArray(root.steps)) {
     throw new ValidationError("sequence.toml requires version = 1, a matching id, and a steps array.");
   }
@@ -124,12 +199,22 @@ export function parseSequenceConfig(content: string, id: string): SequenceConfig
   if (new Set(stepIds).size !== stepIds.length) throw new ValidationError("Sequence step IDs must be unique.");
   const pullRequestStrategy = root.pull_request_strategy ?? DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY;
   if (!SEQUENCE_PULL_REQUEST_STRATEGIES.includes(pullRequestStrategy as SequencePullRequestStrategy)) {
-    throw new ValidationError("pull_request_strategy must be after_sequence or after_each_step.");
+    throw new ValidationError("pull_request_strategy must be after_sequence, after_each_step, or independent_after_each_step.");
+  }
+  const failurePolicy = root.failure_policy ?? DEFAULT_SEQUENCE_FAILURE_POLICY;
+  const maxConsecutiveFailures = root.max_consecutive_failures ?? DEFAULT_SEQUENCE_MAX_CONSECUTIVE_FAILURES;
+  if (!SEQUENCE_FAILURE_POLICIES.includes(failurePolicy as SequenceFailurePolicy)) {
+    throw new ValidationError("failure_policy must be stop or continue.");
+  }
+  if (!Number.isInteger(maxConsecutiveFailures) || (maxConsecutiveFailures as number) < 1 || (maxConsecutiveFailures as number) > 20) {
+    throw new ValidationError("max_consecutive_failures must be an integer between 1 and 20.");
   }
   return {
     id,
     name: validName(root.name, "Sequence name"),
     pullRequestStrategy: pullRequestStrategy as SequencePullRequestStrategy,
+    failurePolicy: failurePolicy as SequenceFailurePolicy,
+    maxConsecutiveFailures: maxConsecutiveFailures as number,
     stepIds: stepIds as string[],
   };
 }
@@ -138,7 +223,11 @@ export function serializeSequenceConfig(sequence: SequenceConfig): string {
   validateSequenceId(sequence.id);
   const name = validName(sequence.name, "Sequence name");
   if (!SEQUENCE_PULL_REQUEST_STRATEGIES.includes(sequence.pullRequestStrategy)) {
-    throw new ValidationError("pullRequestStrategy must be after_sequence or after_each_step.");
+    throw new ValidationError("pullRequestStrategy must be after_sequence, after_each_step, or independent_after_each_step.");
+  }
+  if (!SEQUENCE_FAILURE_POLICIES.includes(sequence.failurePolicy)) throw new ValidationError("failurePolicy must be stop or continue.");
+  if (!Number.isInteger(sequence.maxConsecutiveFailures) || sequence.maxConsecutiveFailures < 1 || sequence.maxConsecutiveFailures > 20) {
+    throw new ValidationError("maxConsecutiveFailures must be an integer between 1 and 20.");
   }
   if (sequence.stepIds.length > 500 || new Set(sequence.stepIds).size !== sequence.stepIds.length) {
     throw new ValidationError("A Sequence may contain at most 500 unique steps.");
@@ -149,6 +238,8 @@ export function serializeSequenceConfig(sequence: SequenceConfig): string {
     `id = ${quoteToml(sequence.id)}`,
     `name = ${quoteToml(name)}`,
     `pull_request_strategy = ${quoteToml(sequence.pullRequestStrategy)}`,
+    `failure_policy = ${quoteToml(sequence.failurePolicy)}`,
+    `max_consecutive_failures = ${sequence.maxConsecutiveFailures}`,
     `steps = [${sequence.stepIds.map(quoteToml).join(", ")}]`,
     "",
   ].join("\n");

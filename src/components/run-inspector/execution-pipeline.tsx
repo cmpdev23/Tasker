@@ -1,6 +1,7 @@
 import type { Run } from "@db/schema";
 import { CheckCircle2Icon, CircleDashedIcon, CircleXIcon, ExternalLinkIcon, Loader2Icon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { parseRunResult } from "./event-normalizer";
 import { resolvedExecutionConfig } from "./execution-config";
 import type { ProjectCommandActivity } from "./project-command-events";
@@ -80,13 +81,23 @@ export function CodexCompletion({ run, commands, sequenceStep }: { run: Run; com
   );
 }
 
-export function GitFinalization({ run, commands, sequenceStep, publicationBranch }: { run: Run; commands: ProjectCommandActivity[]; sequenceStep: boolean; publicationBranch?: string | null }) {
+export function GitFinalization({ run, commands, sequenceStep, publicationBranch, publishingDraft = false, draftError, onPublishDraft }: {
+  run: Run;
+  commands: ProjectCommandActivity[];
+  sequenceStep: boolean;
+  publicationBranch?: string | null;
+  publishingDraft?: boolean;
+  draftError?: string | null;
+  onPublishDraft?: () => void;
+}) {
   const stages = pipelineStages(run, commands, sequenceStep);
   const git = stages.find((item) => item.id === "git")!;
   const publication = stages.find((item) => item.id === "publication")!;
   const config = resolvedExecutionConfig(run.resolvedConfig);
   const publicationEnabled = config.push === true || config.createPullRequest === true || Boolean(run.pushedAt || run.pullRequestUrl);
-  const deferredSequencePublication = sequenceStep && run.kind === "SEQUENCE" && config.sequencePullRequestStrategy !== "after_each_step" && publicationEnabled;
+  const showPublication = publicationEnabled || Boolean(onPublishDraft);
+  const deferredSequencePublication = sequenceStep && run.kind === "SEQUENCE" &&
+    !["after_each_step", "independent_after_each_step"].includes(config.sequencePullRequestStrategy ?? "") && publicationEnabled;
   const branch = publicationBranch ?? run.runBranch;
 
   return (
@@ -104,14 +115,14 @@ export function GitFinalization({ run, commands, sequenceStep, publicationBranch
         <p className="rounded-md border px-3 py-2 text-xs"><span className="text-muted-foreground">Branche</span><br /><span className="break-all font-mono">{branch ?? "En attente"}</span></p>
         <p className="rounded-md border px-3 py-2 text-xs"><span className="text-muted-foreground">Commit</span><br /><span className="break-all font-mono">{run.commitHash ?? (git.status === "skipped" ? "Aucun commit requis" : "En attente")}</span></p>
       </div>
-      {publicationEnabled && (
+      {showPublication && (
         <div className="space-y-2 border-t pt-4">
           <div className="flex gap-3">
             <StatusIcon status={deferredSequencePublication ? "pending" : publication.status} className="mt-0.5" />
             <div>
               <h3 className="text-sm font-medium">Publication</h3>
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                {deferredSequencePublication ? "La branche et la PR seront publiées après la dernière étape de la Sequence." : publication.status === "success" ? "La publication configurée a été réalisée." : publication.status === "failed" ? "La publication configurée n’a pas abouti." : "La publication sera lancée après la finalisation Git."}
+                {deferredSequencePublication ? "La branche et la PR seront publiées après la dernière étape de la Sequence." : publication.status === "success" ? "La publication configurée a été réalisée." : publication.status === "failed" ? "La publication configurée n’a pas abouti." : publicationEnabled ? "La publication sera lancée après la finalisation Git." : "La publication automatique n’était pas activée pour cette exécution."}
               </p>
             </div>
           </div>
@@ -119,6 +130,17 @@ export function GitFinalization({ run, commands, sequenceStep, publicationBranch
             <p className="rounded-md border px-3 py-2 text-xs"><span className="text-muted-foreground">Push</span><br />{run.pushedAt ? "Branche poussée" : deferredSequencePublication ? "Prévu à la fin de la Sequence" : "En attente"}</p>
             <div className="rounded-md border px-3 py-2 text-xs"><span className="text-muted-foreground">Pull request</span><br />{run.pullRequestUrl ? <a href={run.pullRequestUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline">Ouvrir la PR <ExternalLinkIcon className="size-3" /></a> : deferredSequencePublication ? "Prévue à la fin de la Sequence" : "En attente"}</div>
           </div>
+          {onPublishDraft && !run.pullRequestUrl && (
+            <div className="rounded-md border border-dashed px-3 py-3 text-xs">
+              <p className="font-medium">Publier cette étape</p>
+              <p className="mt-1 leading-5 text-muted-foreground">Crée une branche pointant sur ce commit exact et ouvre une pull request GitHub en brouillon, sans rejouer Codex ni les validations.</p>
+              <Button type="button" size="sm" className="mt-3" disabled={publishingDraft} onClick={onPublishDraft}>
+                {publishingDraft ? <Loader2Icon className="animate-spin" /> : null}
+                {publishingDraft ? "Publication…" : "Publier une PR brouillon"}
+              </Button>
+              {draftError && <p role="alert" className="mt-2 text-destructive">{draftError}</p>}
+            </div>
+          )}
         </div>
       )}
     </section>

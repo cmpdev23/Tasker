@@ -10,6 +10,8 @@ le premier Run, sans inventer de conventions propres au dépôt.
 Modifier seulement les éléments de configuration globale nécessaires :
 
 - `.tasker/instructions.md` ;
+- `.tasker/LESSONS.md` lorsqu'il est nécessaire de créer ou de consolider la
+  mémoire opérationnelle du projet ;
 - la table `[execution]` de `.tasker/project.toml`.
 
 Conserver les champs d'identité et `[git]` existants, les agents, les Tasks, les
@@ -43,6 +45,9 @@ Inclure, uniquement quand ils sont établis par le dépôt :
 - l'obligation de lire `AGENTS.md` avant toute modification lorsqu'il existe ;
 - les règles locales qui protègent les secrets, les migrations, les données ou les
   opérations Git destructives.
+- l'obligation de lire `.tasker/LESSONS.md` lorsqu'il existe avant de commencer,
+  et d'y noter seulement les leçons courtes, vérifiées et durables qui évitent une
+  répétition réelle.
 
 Garder les demandes temporaires, le détail d'une fonctionnalité et les consignes
 spécifiques à une étape dans une Task ou une SequenceStep, pas ici. Préférer des

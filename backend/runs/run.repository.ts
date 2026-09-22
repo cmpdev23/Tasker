@@ -61,6 +61,24 @@ export const runRepository = {
       return run;
     }).immediate();
   },
+  createSequenceContinuation(source: Run): Run {
+    return sqlite.transaction(() => {
+      if (source.kind !== "SEQUENCE" || !source.sequenceId) throw new ConflictError("Seules les Sequences peuvent être continuées.");
+      const existing = db.select({ id: runs.id }).from(runs).where(eq(runs.resumeFromRunId, source.id)).get();
+      if (existing) throw new ConflictError("Ce Run possède déjà une continuation. Utilisez son descendant le plus récent.");
+      const active = db.select({ id: runs.id }).from(runs).where(and(eq(runs.projectId, source.projectId),
+        eq(runs.kind, "SEQUENCE"), eq(runs.sequenceId, source.sequenceId), inArray(runs.status, ACTIVE_STATUSES))).get();
+      if (active) throw new ConflictError("Cette Sequence possède déjà un Run actif ou en attente.");
+      const now = new Date().toISOString();
+      const run = db.insert(runs).values({
+        id: randomUUID(), projectId: source.projectId, kind: "SEQUENCE", taskId: source.taskId,
+        taskName: source.taskName, sequenceId: source.sequenceId, status: "QUEUED", queuedAt: now,
+        resumeFromRunId: source.id, resumeStage: "CONTINUING", createdAt: now,
+      }).returning().get();
+      this.event(run.id, "resume", `Continuation queued from completed Run ${source.id}.`);
+      return run;
+    }).immediate();
+  },
   get(projectId: string, runId: string): Run {
     const run = db.select().from(runs).where(and(eq(runs.id, runId), eq(runs.projectId, projectId))).get();
     if (!run) throw new NotFoundError("Run not found.");

@@ -55,7 +55,9 @@ test("queued Runs install, validate and commit under a development host; validat
   git(repo, "remote", "add", "origin", remote);
   git(repo, "push", "origin", "main");
   const base = git(repo, "rev-parse", "HEAD");
+  const prompts: string[] = [];
   const fakeCodex: typeof runCodex = async options => {
+    prompts.push(options.prompt);
     fs.writeFileSync(path.join(options.worktreePath, "article.txt"), "fixture article");
     const agentResult = { status: "SUCCESS" as const, summary: "Fixture article created", blocking_error: null };
     return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
@@ -97,4 +99,7 @@ test("queued Runs install, validate and commit under a development host; validat
     if (previous === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
     else Object.assign(process.env, { NODE_ENV: previous });
   }
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /read `\.tasker\/LESSONS\.md` in this worktree/i);
+  assert.match(prompts[0], /Terminal, tooling, test, and build errors can be useful lessons/i);
 });

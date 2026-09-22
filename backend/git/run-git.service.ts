@@ -28,6 +28,21 @@ export interface ResumeRunWorktreeOptions {
   signal?: AbortSignal;
 }
 
+export interface ContinueSequenceWorktreeOptions {
+  repoPath: string;
+  worktreesRoot: string;
+  runId: string;
+  taskId: string;
+  sourceRunId: string;
+  sourceBranch: string;
+  sourceBaseCommit: string;
+  sourceCommit: string | null;
+  remote: string;
+  baseBranch: string;
+  signal?: AbortSignal;
+  onPrepared?: (worktree: RunWorktree) => void | Promise<void>;
+}
+
 export interface RunWorktree {
   readonly repoPath: string;
   readonly worktreesRoot: string;
@@ -174,6 +189,50 @@ export async function resumeRunWorktree(options: ResumeRunWorktreeOptions): Prom
   return worktree;
 }
 
+/** Start a new Sequence Run from the verified branch of a completed prior Run. */
+export async function continueSequenceWorktree(options: ContinueSequenceWorktreeOptions): Promise<RunWorktree> {
+  const { signal, runId, taskId, sourceRunId, sourceBranch, sourceBaseCommit, sourceCommit, remote, baseBranch } = options;
+  signal?.throwIfAborted();
+  if (!UUID.test(runId) || !UUID.test(sourceRunId) || !TASK_ID.test(taskId)) {
+    throw new Error("Invalid Sequence continuation identity.");
+  }
+  const expectedSourceBranch = `tasker/run-${sourceRunId}-${taskId}`;
+  if (sourceBranch !== expectedSourceBranch) throw new Error("The source Sequence branch does not match its Run identity.");
+  if (!/^[0-9a-f]{40,64}$/.test(sourceBaseCommit) || (sourceCommit !== null && !/^[0-9a-f]{40,64}$/.test(sourceCommit))) {
+    throw new Error("The source Sequence Git commit is invalid.");
+  }
+  const repoPath = await fs.realpath((await git(options.repoPath, ["rev-parse", "--show-toplevel"], signal)).trim());
+  const worktreesRoot = await canonicalProspectivePath(path.resolve(options.worktreesRoot));
+  await ensureExternalRoot(repoPath, worktreesRoot, signal);
+  await fs.mkdir(worktreesRoot, { recursive: true });
+  if (await fs.realpath(/* turbopackIgnore: true */ worktreesRoot) !== worktreesRoot) throw new Error("Runtime directory changed during continuation.");
+  const sourceHead = (await git(repoPath, ["rev-parse", "--verify", `refs/heads/${sourceBranch}^{commit}`], signal)).trim();
+  const expectedHead = sourceCommit ?? sourceBaseCommit;
+  if (sourceHead !== expectedHead) throw new Error("The completed Sequence branch no longer matches its recorded commit.");
+  const branch = `tasker/run-${runId}-${taskId}`;
+  const worktreePath = path.join(worktreesRoot, `run-${runId}-${taskId}`);
+  try {
+    await fs.lstat(worktreePath);
+    throw new Error("The continuation worktree path already exists.");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const worktree: RunWorktree = {
+    repoPath, worktreesRoot, worktreePath, branch, remote, baseBranch,
+    trackingRef: `refs/remotes/${remote}/${baseBranch}`, baseCommit: sourceHead,
+  };
+  try {
+    await options.onPrepared?.(worktree);
+    signal?.throwIfAborted();
+    await fs.mkdir(worktreePath);
+    await git(repoPath, ["worktree", "add", "--no-track", "-b", branch, "--", worktreePath, sourceHead], signal);
+    await verifyRunWorktree(worktree, signal);
+    return worktree;
+  } catch (cause) {
+    throw Object.assign(new Error("Sequence continuation preparation failed; any partial branch/worktree was preserved.", { cause }), { worktree });
+  }
+}
+
 /** Reject replaced directories, detached HEAD, switched branches, or another repository. */
 export async function verifyRunWorktree(worktree: RunWorktree, signal?: AbortSignal): Promise<string> {
   if (!/^tasker\/run-[0-9a-f-]{36}-[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/i.test(worktree.branch)) {
@@ -202,6 +261,16 @@ export async function inspectRunChanges(worktree: RunWorktree, signal?: AbortSig
   const status = await git(worktree.worktreePath, ["status", "--porcelain=v1", "--untracked-files=all"], signal);
   const diff = await git(worktree.worktreePath, ["diff", "--no-ext-diff", "--no-textconv", worktree.baseCommit, "--"], signal);
   return { status, diff, hasChanges: status.length > 0 || diff.length > 0 };
+}
+
+/** Restore an isolated Sequence worktree to its immutable Run base. */
+export async function restoreIndependentSequenceStepWorktree(worktree: RunWorktree, signal?: AbortSignal): Promise<void> {
+  await verifyRunWorktree(worktree, signal);
+  await git(worktree.worktreePath, ["reset", "--hard", worktree.baseCommit], signal);
+  await git(worktree.worktreePath, ["clean", "-ffd"], signal);
+  if (await verifyRunWorktree(worktree, signal) !== worktree.baseCommit) {
+    throw new Error("Independent Sequence step did not return to its base commit.");
+  }
 }
 
 /** Fail closed. No failure path deletes, resets, commits partial work, or pushes anything. */
@@ -326,4 +395,4 @@ export async function deleteRunArtifacts(options: DeleteRunArtifactsOptions): Pr
   return { worktreeRemoved: worktreeExists, branchRemoved };
 }
 
-export const runGitService = { prepareRunWorktree, resumeRunWorktree, verifyRunWorktree, inspectRunChanges, finalizeRunWorktree, cleanupSuccessfulWorktree, deleteRunArtifacts };
+export const runGitService = { prepareRunWorktree, resumeRunWorktree, continueSequenceWorktree, verifyRunWorktree, inspectRunChanges, restoreIndependentSequenceStepWorktree, finalizeRunWorktree, cleanupSuccessfulWorktree, deleteRunArtifacts };

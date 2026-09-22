@@ -11,7 +11,16 @@ export const sequenceRunService = {
     if (runRepository.hasActiveSequence(projectId, sequenceId)) {
       throw new ConflictError("Cette Sequence possède déjà un Run actif ou en attente.");
     }
-    const run = runRepository.createSequence(projectId, sequence.id, sequence.name);
+    const continuationSource = runRepository.listSequences(projectId, sequence.id).find((candidate) => {
+      if (candidate.status !== "SUCCESS" || !candidate.terminationVerified || !candidate.runBranch || !candidate.baseCommit) return false;
+      const completed = sequenceRunRepository.list(candidate.id);
+      return completed.length > 0 && completed.length < sequence.steps.length && completed.every((step, index) =>
+        step.status === "SUCCESS" && step.stepId === sequence.steps[index]?.id && step.stepName === sequence.steps[index]?.name);
+    });
+    const run = continuationSource
+      ? runRepository.createSequenceContinuation(continuationSource)
+      : runRepository.createSequence(projectId, sequence.id, sequence.name);
+    if (continuationSource) sequenceRunRepository.initializeContinuation(run.id, continuationSource.id, sequence);
     const blocker = runRepository.unverifiedTermination();
     const active = runRepository.active()[0];
     logRunDebug("sequence-run-enqueued", {
@@ -19,6 +28,7 @@ export const sequenceRunService = {
       projectId,
       sequenceId,
       stepCount: sequence.steps.length,
+      continuationSourceRunId: continuationSource?.id,
       recoveryBlockerRunId: blocker?.id,
       activeRunId: active?.id,
     });

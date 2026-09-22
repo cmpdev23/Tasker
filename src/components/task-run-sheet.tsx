@@ -49,6 +49,8 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   const [recovering, setRecovering] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [savingLogs, setSavingLogs] = useState(false);
+  const [publishingDraft, setPublishingDraft] = useState(false);
+  const [draftPublicationError, setDraftPublicationError] = useState<string | null>(null);
   const [cancelRequested, setCancelRequested] = useState(initialRun.cancelRequested);
   const [inspectedStepId, setInspectedStepId] = useState<string | null>(initialSequenceStep?.id ?? null);
   const [follow, setFollow] = useState(() => isActiveRun(initialRun.status));
@@ -95,6 +97,8 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
     : sequenceSteps.some((step) => step.status === "FAILED" && step.exitCode === 0);
   const canResumeValidation = run.kind === "SEQUENCE" && run.status === "FAILED" && run.terminationVerified &&
     Boolean(failedCommand) && failedStepCanResume;
+  const canPublishStepDraft = Boolean(inspectedStep && inspectedStep.status === "SUCCESS" && inspectedStep.commitHash &&
+    !inspectedStep.pullRequestUrl && !isActiveRun(run.status) && run.terminationVerified && run.codexPid === null);
 
   useEffect(() => {
     if (!isActiveRun(inspectedRun.status)) return;
@@ -176,6 +180,29 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
       toast.error(errorMessage(caught));
     } finally {
       setSavingLogs(false);
+    }
+  }
+
+  async function publishStepDraft() {
+    if (!inspectedStep || publishingDraft) return;
+    if (!window.confirm(`Publier l’étape « ${inspectedStep.stepName} » en pull request brouillon ? La branche distante pointera sur son commit validé.`)) return;
+    setPublishingDraft(true);
+    setDraftPublicationError(null);
+    try {
+      const publicationUrl = `${runUrl}/sequence-steps/${encodeURIComponent(inspectedStep.stepId)}/publish-draft`;
+      const data = await taskRequest<{ step: SequenceStepRun }>(publicationUrl, { method: "POST" });
+      if (!data?.step) throw new Error("Réponse de publication invalide.");
+      setSequenceSteps((current) => {
+        const next = current.some((step) => step.id === data.step.id)
+          ? current.map((step) => step.id === data.step.id ? data.step : step)
+          : [...current, data.step];
+        return next.sort((left, right) => left.position - right.position);
+      });
+      toast.success("La pull request brouillon est prête.");
+    } catch (caught) {
+      setDraftPublicationError(errorMessage(caught));
+    } finally {
+      setPublishingDraft(false);
     }
   }
 
@@ -330,7 +357,15 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
                 <div ref={activityEnd} aria-hidden />
                 <CodexCompletion run={inspectedRun} commands={commands} sequenceStep={Boolean(inspectedStep)} />
                 <ProjectCommands commands={commands.filter((command) => command.phase === "validation")} heading="Validations de l’étape" titleId="validation-commands-title" commandLabel="Validation" />
-                <GitFinalization run={inspectedRun} commands={commands} sequenceStep={Boolean(inspectedStep)} publicationBranch={inspectedStep?.publicationBranch} />
+                <GitFinalization
+                  run={inspectedRun}
+                  commands={commands}
+                  sequenceStep={Boolean(inspectedStep)}
+                  publicationBranch={inspectedStep?.publicationBranch}
+                  publishingDraft={publishingDraft}
+                  draftError={draftPublicationError}
+                  onPublishDraft={canPublishStepDraft ? () => void publishStepDraft() : undefined}
+                />
                 <RunSummary run={inspectedRun} failedCommand={failedCommand} />
                 <ExecutionDetails run={inspectedRun} />
                 <RawEvents events={visibleEvents} suppressedCount={inspectedStep ? 0 : suppressedEventCount} />

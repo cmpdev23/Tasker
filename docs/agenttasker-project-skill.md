@@ -36,7 +36,7 @@ les mises à jour distantes et appliquer explicitement une nouvelle version.
 
 Le skill couvre exclusivement la configuration versionnée du dépôt :
 
-- `.tasker/project.toml` et `.tasker/instructions.md`;
+- `.tasker/project.toml`, `.tasker/instructions.md` et `.tasker/LESSONS.md`;
 - `.tasker/tasks/`;
 - `.tasker/sequences/` et leurs SequenceSteps;
 - `.tasker/agents/`.
@@ -110,7 +110,9 @@ toujours inspecter le diff produit avant de le committer dans le dépôt cible.
 
 ## Maintenance
 
-Le schéma applicatif réel demeure la source de vérité. Lorsqu’une évolution modifie
+Le schéma applicatif réel demeure la source de vérité. La version 1.4.0 documente
+aussi les PR indépendantes de Sequence et leur politique bornée de poursuite après
+échec. Lorsqu’une évolution modifie
 durablement `.tasker/`, mettre à jour dans la même livraison les références du skill,
 sa version et ce document. Le validateur structurel du `skill-creator` vérifie le
 paquet, mais les exemples doivent aussi être confrontés aux parseurs et sérialiseurs

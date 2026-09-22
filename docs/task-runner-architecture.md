@@ -28,6 +28,8 @@ responsable de chaque transition ; le navigateur observe et contrôle.
   `expect_changes`, planification.
 - `.tasker/tasks/<id>/instructions.md` : instructions propres à la tâche.
 - `.tasker/instructions.md` : instructions de projet.
+- `.tasker/LESSONS.md` : mémoire opérationnelle versionnée du projet; elle
+  rassemble seulement des règles durables tirées d'erreurs comprises.
 - `.tasker/agents/main.toml` : configuration native de Codex.
 - `.tasker/project.toml` : `[git].base_branch`, `[git].remote` (défaut `origin`),
   `push`, `create_pull_request`, `pull_request_draft` et les réglages `[execution]`
@@ -90,6 +92,14 @@ utilisant des bases distinctes restent indépendantes.
 
 ### Sequences dans la queue
 
+Une troisième stratégie de publication, `independent_after_each_step`, est réservée
+aux étapes réellement indépendantes. Elle exige `push` et `create_pull_request` :
+chaque commit est publié sur une branche basée sur la branche de base du Project,
+puis le worktree isolé revient à cette base. Avec `failure_policy = "continue"`,
+une étape échouée est enregistrée et le worker tente la suivante; il s'arrête après
+`max_consecutive_failures` (2 par défaut). Les modifications non validées de
+l’étape échouée sont retirées seulement de ce worktree isolé.
+
 Un Run de Sequence prépare un seul worktree et une seule branche. Chaque étape
 réussie est validée puis commitée avant le démarrage de la suivante; le commit
 devient sa nouvelle base. Les étapes suivantes voient ainsi les fichiers et
@@ -122,7 +132,13 @@ Le chemin de la base reste contrôlé par `DATABASE_PATH`, avec le défaut histo
 ## Codex et prompt
 
 Le prompt combine explicitement les instructions de projet, celles de la tâche et
-les contraintes d’isolation/finalisation. Il passe comme entrée structurée au
+les contraintes d’isolation/finalisation. Il demande aussi à Codex de lire
+directement `.tasker/LESSONS.md` depuis le worktree lorsque ce fichier existe : son
+contenu n'est pas injecté dans le prompt. Codex peut y inscrire une règle courte,
+vérifiée et réutilisable après une erreur ou une correction pertinente, notamment
+pour les outils de terminal, tests, builds ou validations. Il doit d'abord
+distinguer une cause durable d'un échec de quoting, de sandbox, de fichier absent,
+de runtime local ou de commande gérée par le runner. Il passe comme entrée structurée au
 protocole JSON-RPC de `codex app-server`; il n’est jamais interpolé dans une commande
 shell ni enregistré comme définition dans SQLite. Le processus est lancé avec
 `shell: false` et le worktree comme cwd. Les notifications App Server sont adaptées

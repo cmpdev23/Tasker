@@ -64,13 +64,35 @@ version = 1
 id = "production-seo"
 name = "Production SEO"
 pull_request_strategy = "after_sequence"
+failure_policy = "stop"
+max_consecutive_failures = 2
 steps = ["analyser-search-console", "identifier-opportunite", "rediger-article"]
 ```
 
+Pour les Sequences longues, `steps` accepte aussi le format TOML multilignes ;
+l'ordre dans le tableau reste l'ordre d'exécution :
+
+```toml
+steps = [
+  "analyser-search-console",
+  "identifier-opportunite",
+  "rediger-article",
+]
+```
+
 `pull_request_strategy` accepte `after_sequence` (valeur par défaut pour les anciens
-fichiers) ou `after_each_step`. Le second mode crée des PR distinctes et empilées :
-la première cible la branche de base du Project et chaque suivante cible la branche
-de publication de l’étape précédente.
+fichiers), `after_each_step` ou `independent_after_each_step`. Le second mode crée
+des PR distinctes et empilées : la première cible la branche de base du Project et
+chaque suivante cible la branche de publication de l’étape précédente. Le troisième
+mode est destiné aux livrables indépendants, tels que des articles SEO : chaque
+étape repart de la branche de base et sa PR ne contient aucun commit d’une autre
+étape.
+
+`failure_policy` vaut `stop` par défaut. Avec
+`independent_after_each_step`, `continue` marque l’étape en échec puis tente la
+suivante depuis la branche de base. `max_consecutive_failures` (1 à 20, défaut 2)
+interrompt la Sequence au seuil configuré; une étape réussie remet le compteur à
+zéro.
 
 Chaque `step.toml` conserve son identité et sa règle de diff :
 
@@ -125,9 +147,31 @@ liste résolue des identifiants, noms et règles `expect_changes`, tandis que le
    - `after_each_step` pousse après chaque étape ayant produit un commit une branche
      propre à cette étape et crée une PR empilée. La publication doit réussir avant
      que l’étape soit marquée `SUCCESS` et que la suivante démarre.
+   - `independent_after_each_step` exige la publication GitHub activée, crée une PR
+     indépendante pour chaque commit, puis restaure le worktree isolé sur la base
+     avant l’étape suivante. Les PR précédentes n’ont donc pas à être mergées pour
+     poursuivre.
 7. Le worktree propre peut ensuite être retiré. La branche et ses commits demeurent
    la référence durable; l’URL finale est conservée dans le Run et chaque URL de PR
    d’étape est conservée dans son `SequenceStepRun`.
+
+### Ajouter des étapes après un succès
+
+Lorsqu’une Sequence réussie reçoit de nouvelles étapes à la fin, **Exécuter** crée
+une continuation plutôt qu’un Run qui recommence tout. AgentTasker recherche le
+dernier Run `SUCCESS` dont les `SequenceStepRun` réussis constituent un préfixe
+strict compatible de la définition actuelle (mêmes identifiants et noms d’étape).
+Le nouveau Run copie cet historique comme `SUCCESS`, crée un worktree neuf depuis
+la branche conservée du Run source et ne démarre Codex que pour les nouvelles étapes.
+
+Le Run source demeure immuable et sa branche est vérifiée contre son commit final
+avant toute continuation. La continuation garde la même base Git initiale pour la
+traçabilité et conserve les commits de toutes les étapes. Si le préfixe n’est pas
+compatible ou si une étape existante a été réordonnée/renommée, **Exécuter** crée un
+Run complet normal. Si la branche source a disparu ou ne pointe plus sur le commit
+enregistré, la continuation est refusée sans relancer les étapes antérieures.
+L’interface indique explicitement combien d’étapes seront conservées avant le
+lancement.
 
 Les statuts d’étape sont `PENDING`, `RUNNING`, `VALIDATING`, `SUCCESS`, `FAILED`,
 `CANCELLED` et `SKIPPED`. Une étape ne devient `SUCCESS` qu’après les contrôles
@@ -179,6 +223,14 @@ La tab Sequences offre :
   ensuite le journal détaillé et la même action **Reprendre** lorsqu’elle est
   admissible;
 - une progression dédiée affichant chaque SequenceStepRun.
+
+Lorsqu’une étape `SUCCESS` possède un commit vérifié mais aucune PR, son Sheet peut
+déclencher **Publier une PR brouillon**. Cette action locale ne relance ni Codex ni
+les validations : elle pousse une branche d’étape déterministe sur le commit exact,
+contrôle la branche distante et crée une PR GitHub brouillon ou retrouve une PR
+ouverte déjà existante. Une étape
+publiée antérieurement reste la base de la PR empilée; sinon la branche de base du
+Run est utilisée. L’action exige un Run terminal dont l’arrêt est vérifié.
 
 Les définitions actives sont verrouillées pendant leur Run. Les mutations sont
 limitées aux requêtes locales comme celles des Tasks. Les API vivent sous

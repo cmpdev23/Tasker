@@ -135,6 +135,22 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     return stepRunsByRunId.get(displayRun.id) ?? [];
   }, [displayRun, stepRunsByRunId]);
 
+  const continuationSource = useMemo(() => {
+    if (!selectedSequence) return null;
+    return sequenceRuns.find((candidate) => {
+      const completed = stepRunsByRunId.get(candidate.id) ?? [];
+      return candidate.status === "SUCCESS" && candidate.terminationVerified && candidate.runBranch && candidate.baseCommit && completed.length > 0 &&
+        completed.length < selectedSequence.steps.length && completed.every((step, index) =>
+          step.status === "SUCCESS" && step.stepId === selectedSequence.steps[index]?.id &&
+          step.stepName === selectedSequence.steps[index]?.name);
+    }) ?? null;
+  }, [selectedSequence, sequenceRuns, stepRunsByRunId]);
+
+  const continuationStepCount = continuationSource
+    ? selectedSequence!.steps.length - (stepRunsByRunId.get(continuationSource.id)?.length ?? 0)
+    : 0;
+  const retainedStepCount = selectedSequence ? selectedSequence.steps.length - continuationStepCount : 0;
+
   function openRunInspector(run: Run) {
     setSelectedStepRun(null);
     setSelectedRun(run);
@@ -204,7 +220,9 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
       setSelectedRunIdForView(data.run.id);
       setSelectedRun(data.run);
       setRefresh((value) => value + 1);
-      toast.success("Sequence ajoutée à la file.");
+      toast.success(data.run.resumeStage === "CONTINUING"
+        ? "Nouvelle étape ajoutée à la file : les étapes déjà réussies seront conservées."
+        : "Sequence ajoutée à la file.");
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { startingRef.current = false; setStarting(null); }
   }
@@ -345,8 +363,15 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                 )}
               </div>
               <FrameDescription>
-                {selectedSequence.steps.length} étape{selectedSequence.steps.length !== 1 ? "s" : ""} · {selectedSequence.pullRequestStrategy === "after_each_step" ? "une PR empilée par étape avec commit" : "une PR après la Sequence"}
+                {selectedSequence.steps.length} étape{selectedSequence.steps.length !== 1 ? "s" : ""} · {selectedSequence.pullRequestStrategy === "after_each_step" ? "une PR empilée par étape avec commit" : selectedSequence.pullRequestStrategy === "independent_after_each_step" ? "une PR indépendante par étape" : "une PR après la Sequence"}
               </FrameDescription>
+              {continuationSource && (
+                <p className="mt-1 text-xs text-success">
+                  {retainedStepCount === 1 ? "Une étape déjà réussie sera conservée." : `${retainedStepCount} étapes déjà réussies seront conservées.`} {continuationStepCount === 1
+                    ? "Une nouvelle étape sera exécutée."
+                    : `${continuationStepCount} nouvelles étapes seront exécutées.`}
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -361,7 +386,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                 ) : (
                   <PlayIcon />
                 )}
-                {selectedHasActiveRun ? "En cours" : "Exécuter"}
+                {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
               </Button>
               <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setSequenceEditor(selectedSequence)}>
                 <PencilIcon />Configurer

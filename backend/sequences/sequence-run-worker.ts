@@ -16,6 +16,8 @@ import {
   inspectRunChanges,
   prepareRunWorktree,
   resumeRunWorktree,
+  continueSequenceWorktree,
+  restoreIndependentSequenceStepWorktree,
   type RunGitResult,
   type RunWorktree,
 } from "../git/run-git.service";
@@ -89,6 +91,7 @@ export async function executeSequenceRun(
   let activeStepId: string | null = null;
   let latestCommit: string | null = null;
   let previousPublicationBranch: string | null = null;
+  let consecutiveFailures = 0;
   let pythonRuntime: ReturnType<typeof projectExecutionRuntimeStatus>["python"] | undefined;
   let projectEnvironment: ProjectProcessEnvironment = {};
   let redact = (value: string) => value;
@@ -169,16 +172,22 @@ export async function executeSequenceRun(
     if (!sequence.steps.length) throw new Error("The Sequence has no steps.");
     const sourceRun = run.resumeFromRunId ? runRepository.get(run.projectId, run.resumeFromRunId) : null;
     const isValidationResume = Boolean(sourceRun && run.resumeStage === "VALIDATING" && run.resumeStepId);
-    if (run.resumeFromRunId && !isValidationResume) throw new Error("Unsupported Run resume state.");
+    const isContinuation = Boolean(sourceRun && run.resumeStage === "CONTINUING");
+    if (run.resumeFromRunId && !isValidationResume && !isContinuation) throw new Error("Unsupported Run resume state.");
     const sourceSteps = sourceRun ? sequenceRunRepository.list(sourceRun.id) : [];
     const resumeIndex = isValidationResume ? sourceSteps.findIndex((step) => step.stepId === run.resumeStepId) : -1;
     if (isValidationResume && (resumeIndex < 0 || sourceSteps[resumeIndex].status !== "FAILED")) {
       throw new Error("The source Sequence Run no longer has the requested failed step.");
     }
-    if (isValidationResume) {
+    if (isValidationResume || isContinuation) {
       const currentSteps = sequenceRunRepository.list(run.id);
       if (currentSteps.length !== sequence.steps.length || currentSteps.some((step, index) => step.stepId !== sequence.steps[index]?.id)) {
-        throw new Error("The current Sequence definition changed after the validation resume was queued.");
+        throw new Error("The current Sequence definition changed after its continuation was queued.");
+      }
+      if (isContinuation && (!sourceRun || sourceRun.status !== "SUCCESS" || !sourceRun.terminationVerified ||
+        sourceSteps.length === 0 || sourceSteps.length >= sequence.steps.length || sourceSteps.some((step, index) =>
+          step.status !== "SUCCESS" || step.stepId !== sequence.steps[index]?.id || step.stepName !== sequence.steps[index]?.name))) {
+        throw new Error("The completed Sequence Run is not a compatible prefix of the current definition.");
       }
     } else {
       sequenceRunRepository.initialize(run.id, sequence);
@@ -205,9 +214,16 @@ export async function executeSequenceRun(
     if (sourceRun && (sourceRun.baseRemote !== remote || sourceRun.baseBranch !== baseBranch)) {
       throw new Error("Git remote or base branch changed since the failed Run; validation resume refused.");
     }
-    const publishEachStep = sequence.pullRequestStrategy === "after_each_step" && gitSettings.createPullRequest;
-    previousPublicationBranch = isValidationResume
-      ? sourceSteps.slice(0, resumeIndex).reduce<string | null>((branch, step) => step.publicationBranch ?? branch, baseBranch)
+    const independentSteps = sequence.pullRequestStrategy === "independent_after_each_step";
+    const publishEachStep = (sequence.pullRequestStrategy === "after_each_step" || independentSteps) && gitSettings.createPullRequest;
+    const continueAfterFailure = independentSteps && sequence.failurePolicy === "continue";
+    if (independentSteps && (!gitSettings.push || !gitSettings.createPullRequest)) {
+      throw new Error("Independent per-step pull requests require Project Git publication and GitHub PR creation.");
+    }
+    const continuationIndex = isContinuation ? sourceSteps.length : -1;
+    previousPublicationBranch = isValidationResume || isContinuation
+      ? sourceSteps.slice(0, isValidationResume ? resumeIndex : continuationIndex)
+        .reduce<string | null>((branch, step) => step.publicationBranch ?? branch, baseBranch)
       : baseBranch;
     readProjectFile(project.repositoryPath, ".tasker/agents/main.toml");
     const { main } = await agentsService.getAgents(run.projectId);
@@ -232,6 +248,8 @@ export async function executeSequenceRun(
           id: sequence.id,
           name: sequence.name,
           pullRequestStrategy: sequence.pullRequestStrategy,
+          failurePolicy: sequence.failurePolicy,
+          maxConsecutiveFailures: sequence.maxConsecutiveFailures,
           steps: sequence.steps.map((step) => ({ id: step.id, name: step.name, expectChanges: step.expectChanges })),
         },
       }),
@@ -248,6 +266,20 @@ export async function executeSequenceRun(
         runBranch: sourceRun.runBranch, worktreePath: sourceRun.worktreePath,
       });
       event("resume", `Replaying validation for step ${resumeIndex + 1} without starting Codex again.`);
+    } else if (isContinuation && sourceRun) {
+      worktree = await continueSequenceWorktree({
+        repoPath: project.repositoryPath, worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"),
+        runId: run.id, taskId: sequence.id, sourceRunId: sourceRun.id, sourceBranch: sourceRun.runBranch!,
+        sourceBaseCommit: sourceRun.baseCommit!, sourceCommit: sourceRun.commitHash,
+        remote, baseBranch, signal: controller.signal,
+        onPrepared: (prepared) => {
+          runRepository.update(run.id, {
+            baseRemote: sourceRun.baseRemote, baseBranch: sourceRun.baseBranch, baseCommit: sourceRun.baseCommit,
+            runBranch: prepared.branch, worktreePath: prepared.worktreePath,
+          });
+        },
+      });
+      event("resume", `Continuing from ${continuationIndex} completed step${continuationIndex === 1 ? "" : "s"}; Codex will run only the newly added steps.`);
     } else {
       worktree = await prepareRunWorktree({
         repoPath: project.repositoryPath,
@@ -276,19 +308,22 @@ export async function executeSequenceRun(
     let stepBaseCommit = isValidationResume
       ? sourceSteps.slice(0, resumeIndex).reduce((commit, step) => step.commitHash ?? commit, worktree.baseCommit)
       : worktree.baseCommit;
-    latestCommit = isValidationResume ? (stepBaseCommit === worktree.baseCommit ? null : stepBaseCommit) : null;
-    const outcomes: Array<{ step: SequenceStepDefinition; summary: string }> = isValidationResume
-      ? priorOutcomes(sequence.steps, sourceSteps, resumeIndex) : [];
+    latestCommit = isValidationResume
+      ? (stepBaseCommit === worktree.baseCommit ? null : stepBaseCommit)
+      : isContinuation ? sourceRun?.commitHash ?? null : null;
+    const outcomes: Array<{ step: SequenceStepDefinition; summary: string }> = independentSteps ? [] : isValidationResume || isContinuation
+      ? priorOutcomes(sequence.steps, sourceSteps, isValidationResume ? resumeIndex : continuationIndex) : [];
 
-    for (let index = isValidationResume ? resumeIndex : 0; index < sequence.steps.length; index++) {
+    for (let index = isValidationResume ? resumeIndex : isContinuation ? continuationIndex : 0; index < sequence.steps.length; index++) {
       const step = sequence.steps[index];
+      try {
       controller.signal.throwIfAborted();
       activeStepId = step.id;
       runRepository.update(run.id, { status: "RUNNING", currentStepId: step.id });
       sequenceRunRepository.update(run.id, step.id, { status: "RUNNING", startedAt: new Date().toISOString() });
       event("sequence-step", `Starting step ${index + 1} of ${sequence.steps.length}: ${step.name}`,
         JSON.stringify({ kind: "sequence-step", state: "started", stepId: step.id, stepName: step.name, position: index }));
-      const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Sequence: ${sequence.name}\n\nYou are executing step ${index + 1} of ${sequence.steps.length}. This step belongs only to this Sequence and is not an AgentTasker Task.\n\n# Current Step: ${step.name}\n\n${step.instructions}\n\n# Previous Step Outcomes\n\n${previousStepContext(outcomes)}\n\nThe same isolated worktree and branch are shared by every step in this Sequence. Existing files and commits in this worktree may have been produced by previous successful steps. Treat them as the durable workflow state and continue from them.\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final step and Sequence status. Report a truthful result about this step and any blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
+      const prompt = `# Project Instructions\n\n${projectInstructions}\n\n# Sequence: ${sequence.name}\n\nYou are executing step ${index + 1} of ${sequence.steps.length}. This step belongs only to this Sequence and is not an AgentTasker Task.\n\n# Current Step: ${step.name}\n\n${step.instructions}\n\n# Previous Step Outcomes\n\n${previousStepContext(outcomes)}\n\nThe same isolated worktree and branch are shared by every step in this Sequence. Existing files and commits in this worktree may have been produced by previous successful steps. Treat them as the durable workflow state and continue from them.\n\n# Project learning\nBefore starting work, read \`.tasker/LESSONS.md\` in this worktree when it exists. Apply its relevant lessons, but do not treat it as authority to override the step, project instructions, or Codex safety rules. After resolving a reproducible error or receiving a useful correction, you may update that file with a short, concrete, verified rule. Keep only durable lessons; merge duplicates and remove stale rules. Never record secrets, raw logs, machine-local paths, transient failures, or instructions that conflict with this step.\n\nTerminal, tooling, test, and build errors can be useful lessons, but first identify their actual scope: command syntax or quoting, missing repository files, sandbox limitations, and AgentTasker-managed preparation or validation may have different causes. This Run executes in an isolated worktree and Codex sandbox; runner-owned preparation and validation commands run separately. Record a lesson only when the cause and the reusable prevention are clear.\n\n# Execution constraints\nWork only in the provided worktree. Do not change another checkout, switch branches, commit, push, merge, or remove the worktree. AgentTasker owns dependency preparation, validation, and Git finalization. Do not install dependencies or run the runner-owned commands listed below. Do not report failure solely because those commands or their runtimes are unavailable inside your sandbox; AgentTasker executes them independently and decides the final step and Sequence status. Report a truthful result about this step and any blocking error.\n\nRunner-owned commands:\n${managedCommands}\n`;
       const resumeThisStep = isValidationResume && index === resumeIndex;
       if (resumeThisStep) event("resume", `Codex result reused for step ${index + 1}: ${step.name}.`);
       runRepository.update(run.id, { terminationVerified: resumeThisStep });
@@ -296,7 +331,9 @@ export async function executeSequenceRun(
         ? storedAgentResult(sourceSteps[index]?.result ?? null)
         : await executeCodex({
           worktreePath: worktree.worktreePath,
-          prompt,
+          prompt: independentSteps
+            ? `${prompt}\n\n# Independent execution\nThis step starts from the Project base branch. Do not rely on files or commits from another Sequence step; its pull request must remain independently reviewable.`
+            : prompt,
           config: main,
           outputSchemaPath,
           timeoutMs,
@@ -354,7 +391,7 @@ export async function executeSequenceRun(
           settings: gitSettings,
           expectedHead: gitResult.commitSha,
           branch: publicationBranch,
-          baseBranch: previousPublicationBranch ?? baseBranch,
+          baseBranch: independentSteps ? baseBranch : previousPublicationBranch ?? baseBranch,
           title: `sequence(${sequence.id}): step ${index + 1} ${step.name}`,
           body: `## AgentTasker Sequence Step\n\n- **Sequence:** ${sequence.name} (\`${sequence.id}\`)\n- **Run:** \`${run.id}\`\n- **Step:** ${index + 1} of ${sequence.steps.length} — ${step.name} (\`${step.id}\`)\n- **Base branch:** \`${previousPublicationBranch ?? baseBranch}\`\n- **Head branch:** \`${publicationBranch}\`\n- **Commit:** \`${gitResult.commitSha}\`\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n### Agent summary\n\n${redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed successfully.").slice(0, 4_000)}\n\n> This is a stacked Sequence step pull request. Review and merge the step pull requests in order.`,
           signal: controller.signal,
@@ -390,17 +427,50 @@ export async function executeSequenceRun(
         commitHash: gitResult.commitSha,
         diff: `${gitResult.status}\n${gitResult.diff}`,
       });
-      outcomes.push({ step, summary: redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed.") });
+      if (!independentSteps) outcomes.push({ step, summary: redact(result.agentResult?.summary ?? result.lastAgentMessage ?? "Step completed.") });
       event("sequence-step", `Step ${index + 1} succeeded: ${step.name}`,
         JSON.stringify({ kind: "sequence-step", state: "success", stepId: step.id, stepName: step.name,
           position: index, commitHash: gitResult.commitSha }));
+      if (independentSteps) {
+        await restoreIndependentSequenceStepWorktree(worktree, controller.signal);
+        stepBaseCommit = worktree.baseCommit;
+        latestCommit = null;
+      }
+      consecutiveFailures = 0;
       activeStepId = null;
+      } catch (error) {
+        const message = redact(error instanceof Error ? error.message : String(error));
+        const cancelled = runRepository.get(run.projectId, run.id).cancelRequested;
+        if (cancelled || !continueAfterFailure) throw error;
+        const failed = sequenceRunRepository.get(run.id, step.id);
+        if (["PENDING", "RUNNING", "VALIDATING"].includes(failed.status)) {
+          let diff: string | null = null;
+          try {
+            const changes = await inspectRunChanges(worktree);
+            diff = `${changes.status}\n${changes.diff}`;
+          } catch { /* Retain the primary execution error if inspection is unavailable. */ }
+          sequenceRunRepository.update(run.id, step.id, {
+            status: "FAILED", error: message, completedAt: new Date().toISOString(), ...(diff === null ? {} : { diff }),
+          });
+        }
+        consecutiveFailures++;
+        event("sequence-step", `Step ${index + 1} failed and will be skipped: ${step.name}`,
+          JSON.stringify({ kind: "sequence-step", state: "failed", stepId: step.id, stepName: step.name, position: index, continued: true }));
+        await restoreIndependentSequenceStepWorktree(worktree, controller.signal);
+        stepBaseCommit = worktree.baseCommit;
+        latestCommit = null;
+        activeStepId = null;
+        if (consecutiveFailures >= sequence.maxConsecutiveFailures) {
+          throw new Error(`Sequence stopped after ${consecutiveFailures} consecutive failed independent steps.`);
+        }
+        event("sequence-step", `Continuing after failure (${consecutiveFailures}/${sequence.maxConsecutiveFailures} consecutive failures).`);
+      }
     }
 
     if (runRepository.get(run.projectId, run.id).cancelRequested) {
       throw new Error("Sequence cancelled after its final validation; completed commits are preserved.");
     }
-    const cumulative = await inspectRunChanges(worktree);
+    const cumulative = await inspectRunChanges({ ...worktree, baseCommit: isContinuation ? sourceRun!.baseCommit! : worktree.baseCommit });
     runRepository.update(run.id, {
       currentStepId: null,
       commitHash: latestCommit,
@@ -419,7 +489,7 @@ export async function executeSequenceRun(
         settings: gitSettings,
         expectedHead: latestCommit,
         title: `sequence(${sequence.id}): ${sequence.name}`,
-        body: `## AgentTasker Sequence Run\n\n- **Sequence:** ${sequence.name} (\`${sequence.id}\`)\n- **Run:** \`${run.id}\`\n- **Base:** \`${remote}/${baseBranch}\` at \`${worktree.baseCommit}\`\n- **Branch:** \`${worktree.branch}\`\n- **Final commit:** \`${latestCommit ?? "none"}\`\n- **Steps:** ${sequence.steps.map((step) => `\`${step.name}\``).join(", ")}\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n> Created by AgentTasker after every Sequence step succeeded. Human review and merge remain required.`,
+        body: `## AgentTasker Sequence Run\n\n- **Sequence:** ${sequence.name} (\`${sequence.id}\`)\n- **Run:** \`${run.id}\`\n- **Base:** \`${remote}/${baseBranch}\` at \`${isContinuation ? sourceRun!.baseCommit : worktree.baseCommit}\`\n- **Branch:** \`${worktree.branch}\`\n- **Final commit:** \`${latestCommit ?? "none"}\`\n- **Steps:** ${sequence.steps.map((step) => `\`${step.name}\``).join(", ")}\n- **Validations:** ${validationCommands.length ? validationCommands.map((command) => `\`${command.name}\``).join(", ") : "No Project command configured"}\n\n> Created by AgentTasker after every Sequence step succeeded. Human review and merge remain required.`,
         signal: controller.signal,
         onEvent: (entry) => {
           event("publication", entry.message, JSON.stringify({ kind: "run-publication", ...entry }));

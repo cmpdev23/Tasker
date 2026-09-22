@@ -9,6 +9,7 @@ Git publication, dependency installation, validation scripts, or shared timeouts
 .tasker/
 ├── project.toml
 ├── instructions.md
+├── LESSONS.md
 ├── agents/
 │   └── main.toml
 ├── tasks/
@@ -73,6 +74,18 @@ may direct the agent to read repository files.
 
 Keep temporary requests and one-off deliverables in Task or SequenceStep
 instructions instead of the project instructions.
+
+## `LESSONS.md`
+
+`LESSONS.md` is the project-owned operational memory. Keep it versioned beside
+the project instructions. It may record a short, verified rule after a recurring
+terminal, tooling, test, build, validation, or user-correction issue. Each lesson
+should state the observed symptom, confirmed cause, and reusable prevention.
+
+Do not use it as a log. Never add secrets, raw command output, machine-local paths,
+temporary failures, or instructions that override the current Task, SequenceStep,
+or repository safety rules. Merge duplicate lessons and remove rules disproved by
+the current project.
 
 ## Source-of-truth boundary
 

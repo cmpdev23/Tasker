@@ -58,6 +58,7 @@ cmt/
 ├── .tasker/
 │   ├── project.toml
 │   ├── instructions.md
+│   ├── LESSONS.md
 │   ├── logs/
 │   │   └── <task-id>_<run-id>.txt
 │   │
@@ -188,6 +189,7 @@ Initial structure:
 .tasker/
 ├── project.toml
 ├── instructions.md
+├── LESSONS.md
 ├── agents/
 │   ├── main.toml
 │   └── <subagent-id>.toml
@@ -256,10 +258,12 @@ désactivée par défaut. Une PR exige le push; le mode brouillon est recommand�
 l’auto-merge n’existe pas. Les identifiants logiques suivent le dépôt, tandis que
 l’authentification Git/GitHub reste locale et aucun secret n’est écrit dans ce fichier.
 
-Chaque `sequence.toml` ajoute `pull_request_strategy = "after_sequence"` ou
-`"after_each_step"`. Cette stratégie portable choisit entre une PR finale et des PR
-empilées par étape; les URLs, branches publiées et timestamps de chaque exécution
-restent de l'état opérationnel SQLite dans `sequence_step_runs`.
+Chaque `sequence.toml` ajoute `pull_request_strategy = "after_sequence"`,
+`"after_each_step"` ou `"independent_after_each_step"`. La dernière stratégie crée
+une PR par étape depuis la base du Project. Les clés `failure_policy = "stop"|"continue"`
+et `max_consecutive_failures` (1–20, défaut 2) déterminent si les étapes indépendantes
+peuvent poursuivre après un échec. Les URLs, branches publiées et timestamps de chaque
+exécution restent de l'état opérationnel SQLite dans `sequence_step_runs`.
 
 Les réglages d’exécution sont partagés par les Tasks du Project. AgentTasker transforme les
 noms de scripts en commandes déterministes du gestionnaire choisi; il ne stocke
@@ -286,6 +290,14 @@ reprennent directement le schéma natif de Codex; voir
 `docs/codex-agent-configuration.md`.
 
 This keeps prompts easy to read, edit, diff, and review.
+
+`LESSONS.md` est une mémoire opérationnelle propre au projet. Elle contient des
+règles brèves et vérifiables tirées d'erreurs réellement comprises (terminal,
+outils, tests, build ou validation), afin que les Runs suivants évitent de les
+répéter. Elle ne contient ni logs bruts, ni secrets, ni chemins machine, ni état
+de Run. Le worker n'injecte pas son contenu dans le prompt : Codex reçoit seulement
+la consigne de le lire directement dans le worktree et peut le mettre à jour dans
+la branche du Run lorsque la leçon est durable.
 
 ------------------------------------------------------------------------
 
@@ -590,6 +602,7 @@ un coffre-fort système contre un processus local déjà compromis.
   ------------------------------- ------------ ------------------------
   Project logical configuration              ✓ 
   Project instructions                       ✓ 
+  Project operational lessons                ✓
   Task definitions                           ✓ 
   Task instructions/prompts                  ✓ 
   Sequence definitions                      ✓
@@ -663,6 +676,7 @@ No AgentTasker configuration detected
 → create .tasker/
 → create project.toml
 → create instructions.md
+→ create LESSONS.md
 → create tasks/
 → create sequences/
 ```
@@ -751,6 +765,7 @@ Git Repository
 └── .tasker/
     ├── project.toml
     ├── instructions.md
+    ├── LESSONS.md
     └── tasks/
         └── ...
         │

@@ -7,6 +7,7 @@ import type {
   SequenceStepDefinition,
 } from "../../src/types/sequences";
 import { DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY } from "../../src/types/sequences";
+import { DEFAULT_SEQUENCE_FAILURE_POLICY, DEFAULT_SEQUENCE_MAX_CONSECUTIVE_FAILURES } from "../../src/types/sequences";
 import {
   parseSequenceConfig,
   parseSequenceStepConfig,
@@ -145,6 +146,8 @@ function readSequence(sequencesDirectory: string, sequenceId: string): SequenceD
     id: config.id,
     name: config.name,
     pullRequestStrategy: config.pullRequestStrategy,
+    failurePolicy: config.failurePolicy,
+    maxConsecutiveFailures: config.maxConsecutiveFailures,
     steps: config.stepIds.map((stepId) => readStep(stepsDirectory, stepId)),
   };
 }
@@ -163,6 +166,8 @@ function sequenceConfig(sequence: SequenceDefinition): SequenceConfig {
     id: sequence.id,
     name: sequence.name,
     pullRequestStrategy: sequence.pullRequestStrategy,
+    failurePolicy: sequence.failurePolicy,
+    maxConsecutiveFailures: sequence.maxConsecutiveFailures,
     stepIds: sequence.steps.map((step) => step.id),
   };
 }
@@ -231,6 +236,8 @@ export class SequenceService {
       id,
       name: validated.name,
       pullRequestStrategy: validated.pullRequestStrategy ?? DEFAULT_SEQUENCE_PULL_REQUEST_STRATEGY,
+      failurePolicy: validated.failurePolicy ?? DEFAULT_SEQUENCE_FAILURE_POLICY,
+      maxConsecutiveFailures: validated.maxConsecutiveFailures ?? DEFAULT_SEQUENCE_MAX_CONSECUTIVE_FAILURES,
       steps: [],
     };
     try {
@@ -253,6 +260,8 @@ export class SequenceService {
       ...current,
       name: validated.name,
       pullRequestStrategy: validated.pullRequestStrategy ?? current.pullRequestStrategy,
+      failurePolicy: validated.failurePolicy ?? current.failurePolicy,
+      maxConsecutiveFailures: validated.maxConsecutiveFailures ?? current.maxConsecutiveFailures,
     };
     replaceFile(path.join(sequences, sequenceId), "sequence.toml", serializeSequenceConfig(sequenceConfig(updated)));
     return updated;

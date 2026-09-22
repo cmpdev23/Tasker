@@ -51,3 +51,10 @@
   événement App Server légitime contenant un résultat binaire. Accepter une taille
   de transport bornée plus élevée, puis retirer le base64 et borner les champs avant
   toute persistance dans `run_events`.
+- Avec la primitive Base UI `Button`, un `render={<a ... />}` doit toujours définir
+  `nativeButton={false}`. Vérifier cette règle lorsqu’un bouton n’affiche plus un
+  élément `<button>` natif, notamment pour les liens de PR.
+- Quand une Sequence réussie évolue par ajout d’étapes, ne jamais relancer
+  silencieusement son préfixe réussi. Réutiliser exclusivement une branche de Run
+  vérifiée dans un nouveau worktree, conserver l’historique source immuable et
+  indiquer dans l’interface quelles étapes seront effectivement exécutées.

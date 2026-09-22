@@ -116,6 +116,8 @@ test("a Sequence executes its own steps in order in one shared worktree", { time
   assert.equal(run.pullRequestUrl, "https://github.com/fixture/agenttasker/pull/42");
   assert.deepEqual(JSON.parse(run.resolvedConfig ?? "{}").localExecution.environmentVariables, ["SEARP_API_KEY"]);
   assert.match(prompts[0], /step 1 of 3/i);
+  assert.match(prompts[0], /read `\.tasker\/LESSONS\.md` in this worktree/i);
+  assert.match(prompts[0], /Terminal, tooling, test, and build errors can be useful lessons/i);
   assert.match(prompts[1], /Step 1 summary/);
   assert.match(prompts[2], /Step 2 summary/);
   const steps = sequenceRunRepository.list(run.id);
@@ -126,6 +128,47 @@ test("a Sequence executes its own steps in order in one shared worktree", { time
   assert.match(run.diff ?? "", /research\.txt/);
   assert.match(run.diff ?? "", /article\.txt/);
   assert.equal(git(repo, "rev-list", "--count", `${base}..${run.runBranch}`), "2");
+});
+
+test("adding a Sequence step continues from the completed prefix without rerunning it", { timeout: 60_000 }, async () => {
+  const { project, repo, sequence: initialSequence, base } = await sequenceFixture();
+  let initialCalls = 0;
+  const initialCodex: typeof runCodex = async (options) => {
+    initialCalls++;
+    fs.writeFileSync(path.join(options.worktreePath, `initial-${initialCalls}.txt`), `completed ${initialCalls}`);
+    const agentResult = { status: "SUCCESS" as const, summary: `Initial step ${initialCalls}`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  const initialRun = fixture.runRepository.createSequence(project.id, initialSequence.id, initialSequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), initialCodex);
+  assert.equal(fixture.runRepository.get(project.id, initialRun.id).status, "SUCCESS");
+  assert.equal(initialCalls, 3);
+
+  const sequence = await sequenceService.createStep(project.id, initialSequence.id, {
+    name: "Publish", instructions: "Publish the completed work.", expectChanges: true,
+  });
+  const continued = await sequenceRunService.enqueue(project.id, sequence.id);
+  assert.equal(continued.resumeFromRunId, initialRun.id);
+  assert.equal(continued.resumeStage, "CONTINUING");
+  assert.deepEqual(sequenceRunRepository.list(continued.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS", "PENDING"]);
+
+  let continuationCalls = 0;
+  const continuationCodex: typeof runCodex = async (options) => {
+    continuationCalls++;
+    assert.equal(fs.readFileSync(path.join(options.worktreePath, "initial-1.txt"), "utf8"), "completed 1");
+    fs.writeFileSync(path.join(options.worktreePath, "publish.txt"), "published");
+    const agentResult = { status: "SUCCESS" as const, summary: "Published", blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), continuationCodex);
+
+  const completed = fixture.runRepository.get(project.id, continued.id);
+  assert.equal(completed.status, "SUCCESS", completed.error ?? undefined);
+  assert.equal(continuationCalls, 1, "only the new Sequence step should start Codex");
+  assert.deepEqual(sequenceRunRepository.list(completed.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]);
+  assert.equal(git(repo, "rev-list", "--count", `${base}..${completed.runBranch}`), "4");
 });
 
 test("a failed Sequence step stops every following step", { timeout: 60_000 }, async () => {
@@ -170,6 +213,80 @@ test("a failed Sequence step stops every following step", { timeout: 60_000 }, a
   assert.equal(steps[1].pullRequestUrl, null);
   assert.equal(run.pullRequestUrl, "https://github.com/fixture/agenttasker/pull/51");
   assert.ok(run.worktreePath && fs.existsSync(run.worktreePath), "failed Sequence work must be preserved");
+});
+
+test("independent step PRs continue after one failure and restart from the base", { timeout: 60_000 }, async () => {
+  const { project, repo, sequence: initialSequence, base } = await sequenceFixture(true);
+  const sequence = await sequenceService.update(project.id, initialSequence.id, {
+    name: initialSequence.name,
+    pullRequestStrategy: "independent_after_each_step",
+    failurePolicy: "continue",
+    maxConsecutiveFailures: 2,
+  });
+  let call = 0;
+  const fakeCodex: typeof runCodex = async (options) => {
+    call++;
+    if (call === 1) {
+      fs.writeFileSync(path.join(options.worktreePath, "research.txt"), "first article");
+    } else if (call === 2) {
+      assert.equal(fs.existsSync(path.join(options.worktreePath, "research.txt")), false);
+      fs.writeFileSync(path.join(options.worktreePath, "failed.txt"), "partial article");
+      const agentResult = { status: "FAILURE" as const, summary: "Missing source", blocking_error: "Missing source" };
+      return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+        lastAgentMessage: JSON.stringify(agentResult), error: "Missing source", agentResult, terminationVerified: true };
+    } else {
+      assert.equal(fs.existsSync(path.join(options.worktreePath, "research.txt")), false);
+      assert.equal(fs.existsSync(path.join(options.worktreePath, "failed.txt")), false);
+      fs.writeFileSync(path.join(options.worktreePath, "review.txt"), "third article");
+    }
+    const agentResult = { status: "SUCCESS" as const, summary: `Step ${call} complete`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  const publicationBases: string[] = [];
+  const fakePublication: PublishRunWorktree = async (worktree, options) => {
+    publicationBases.push(options.baseBranch ?? "");
+    assert.equal(options.baseBranch, "main");
+    assert.equal(git(worktree.worktreePath, "rev-parse", `${options.expectedHead}^`), base);
+    const branch = options.branch ?? worktree.branch;
+    return { pushed: true, pushedAt: "2026-09-22T12:00:00.000Z",
+      pullRequestUrl: `https://github.com/fixture/agenttasker/pull/${publicationBases.length}`,
+      pullRequestCreated: true, branch };
+  };
+  const queued = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), fakeCodex, fakePublication);
+
+  const run = fixture.runRepository.get(project.id, queued.id);
+  assert.equal(run.status, "SUCCESS", run.error ?? undefined);
+  assert.equal(call, 3);
+  assert.deepEqual(publicationBases, ["main", "main"]);
+  assert.deepEqual(sequenceRunRepository.list(run.id).map((step) => step.status), ["SUCCESS", "FAILED", "SUCCESS"]);
+  assert.equal(git(repo, "rev-parse", run.runBranch!), base, "the durable Run branch returns to the base after independent steps");
+});
+
+test("independent steps stop at the configured consecutive-failure limit", { timeout: 60_000 }, async () => {
+  const { project, sequence: initialSequence } = await sequenceFixture(true);
+  const sequence = await sequenceService.update(project.id, initialSequence.id, {
+    name: initialSequence.name,
+    pullRequestStrategy: "independent_after_each_step",
+    failurePolicy: "continue",
+    maxConsecutiveFailures: 2,
+  });
+  let calls = 0;
+  const fakeCodex: typeof runCodex = async () => {
+    calls++;
+    const agentResult = { status: "FAILURE" as const, summary: "Blocked", blocking_error: "Blocked" };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: "Blocked", agentResult, terminationVerified: true };
+  };
+  const queued = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), fakeCodex);
+
+  const run = fixture.runRepository.get(project.id, queued.id);
+  assert.equal(run.status, "FAILED");
+  assert.equal(calls, 2);
+  assert.match(run.error ?? "", /2 consecutive failed independent steps/);
+  assert.deepEqual(sequenceRunRepository.list(run.id).map((step) => step.status), ["FAILED", "FAILED", "SKIPPED"]);
 });
 
 test("a validation resume reuses the completed Codex step and continues the Sequence", { timeout: 60_000 }, async () => {

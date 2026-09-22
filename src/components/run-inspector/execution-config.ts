@@ -128,7 +128,7 @@ export function runExecutionRows(run: Run, config = resolvedExecutionConfig(run.
       ? (config.pullRequestDraft === false ? "Activée, prête pour révision" : "Activée en brouillon")
       : config.createPullRequest === false ? "Désactivée" : "Non renseignée"],
     ["Stratégie PR de Sequence", run.kind === "SEQUENCE"
-      ? config.sequencePullRequestStrategy === "after_each_step" ? "Une PR empilée par étape avec commit" : "Une PR après toute la Sequence"
+      ? config.sequencePullRequestStrategy === "after_each_step" ? "Une PR empilée par étape avec commit" : config.sequencePullRequestStrategy === "independent_after_each_step" ? "Une PR indépendante par étape" : "Une PR après toute la Sequence"
       : "Sans objet"],
     ["Base", [run.baseRemote, run.baseBranch].filter(Boolean).join("/") || "Non renseignée"],
     ["Commit de base", run.baseCommit || "Non renseigné"],

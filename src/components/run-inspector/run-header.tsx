@@ -63,6 +63,7 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
             <Button
               variant="outline"
               size="sm"
+              nativeButton={false}
               render={<a href={run.pullRequestUrl} target="_blank" rel="noreferrer" />}
             >
               <ExternalLinkIcon data-icon="inline-start" />

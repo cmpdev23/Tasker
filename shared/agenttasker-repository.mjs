@@ -1,7 +1,30 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const PROJECT_INSTRUCTIONS_TEMPLATE = "# Instructions du projet\n";
+export const PROJECT_INSTRUCTIONS_TEMPLATE = `# Instructions du projet
+
+## Mémoire du projet
+
+Avant de commencer une Task ou une étape de Sequence, lire
+\`.tasker/LESSONS.md\` lorsqu'il existe. Ce fichier contient des leçons
+opérationnelles propres au dépôt.
+
+Après avoir résolu une erreur reproductible ou reçu une correction utile, tu peux
+le mettre à jour. N'y conserve que des règles courtes, concrètes et vérifiables;
+n'y inscris jamais de secret, de log brut, de chemin local, de détail temporaire ou
+d'instruction qui contredit les règles du projet.
+`;
+
+export const PROJECT_LESSONS_TEMPLATE = `# Leçons du projet
+
+Ce fichier est la mémoire opérationnelle versionnée de ce dépôt. Il sert à éviter
+de répéter des erreurs déjà comprises.
+
+Ajoute seulement des leçons durables, courtes et vérifiables. Pour chaque entrée,
+indiquer le symptôme, la cause confirmée et la règle à appliquer. Fusionner les
+doublons et retirer les règles devenues fausses. Ne jamais y inscrire de secrets,
+de logs bruts, de chemins machine ou de détails propres à un Run.
+`;
 
 export const MAIN_AGENT_TEMPLATE = `# Codex defaults managed by AgentTasker for this repository.
 # Keys intentionally mirror Codex config.toml.
@@ -98,6 +121,7 @@ export function initializeAgentTaskerRepository(input) {
 
   assertSafePath(taskerDirectory, ["project.toml"]);
   assertSafePath(taskerDirectory, ["instructions.md"]);
+  assertSafePath(taskerDirectory, ["LESSONS.md"]);
   assertSafePath(taskerDirectory, ["agents", "main.toml"]);
   writeMissingFile(path.join(taskerDirectory, "project.toml"), projectTomlTemplate({
     projectName,
@@ -105,6 +129,7 @@ export function initializeAgentTaskerRepository(input) {
     packageManager: input.packageManager,
   }), created);
   writeMissingFile(path.join(taskerDirectory, "instructions.md"), PROJECT_INSTRUCTIONS_TEMPLATE, created);
+  writeMissingFile(path.join(taskerDirectory, "LESSONS.md"), PROJECT_LESSONS_TEMPLATE, created);
   writeMissingFile(path.join(taskerDirectory, "agents", "main.toml"), MAIN_AGENT_TEMPLATE, created);
 
   return { repositoryPath, taskerDirectory, existed, created };

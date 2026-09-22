@@ -91,11 +91,16 @@ test("Sequence CRUD owns ordered steps without creating Tasks", async (t) => {
 });
 
 test("Sequence TOML round-trips and rejects malformed or injected fields", () => {
-  const config = { id: "seo", name: 'SEO "workflow"', pullRequestStrategy: "after_each_step", stepIds: ["research", "write"] };
+  const config = {
+    id: "seo", name: 'SEO "workflow"', pullRequestStrategy: "after_each_step",
+    failurePolicy: "stop", maxConsecutiveFailures: 2, stepIds: ["research", "write"],
+  };
   const serialized = serializeSequenceConfig(config);
   assert.deepEqual(parseSequenceConfig(serialized, config.id), config);
-  assert.equal(parseSequenceConfig(serialized.replace('pull_request_strategy = "after_each_step"\n', ""), config.id).pullRequestStrategy,
-    "after_sequence", "older Sequence files must retain the safe final-publication behavior");
+  const legacy = parseSequenceConfig(serialized.replace(/pull_request_strategy = "after_each_step"\n(?:failure_policy = "stop"\nmax_consecutive_failures = 2\n)?/, ""), config.id);
+  assert.equal(legacy.pullRequestStrategy, "after_sequence", "older Sequence files must retain the safe final-publication behavior");
+  assert.equal(legacy.failurePolicy, "stop");
+  assert.equal(legacy.maxConsecutiveFailures, 2);
   const step = { id: "research", ...stepInput(1) };
   assert.deepEqual(parseSequenceStepConfig(serializeSequenceStepConfig(step), step.id, step.instructions), step);
   for (const invalid of [null, {}, { name: "" }, { name: "SEO", taskId: "forbidden" },
@@ -109,6 +114,20 @@ test("Sequence TOML round-trips and rejects malformed or injected fields", () =>
   assert.throws(() => parseSequenceConfig(serialized.replace('id = "seo"', 'id = "task-reference"'), "seo"), ValidationError);
   assert.throws(() => parseSequenceConfig(`${serialized}unknown = true\n`, "seo"), ValidationError);
   assert.throws(() => parseSequenceConfig(serialized.replace('steps = ["research", "write"]', 'steps = ["research", "research"]'), "seo"), ValidationError);
+});
+
+test("Sequence TOML accepts a multiline steps array", () => {
+  const config = parseSequenceConfig([
+    "version = 1",
+    'id = "seo"',
+    'name = "SEO workflow"',
+    'steps = [',
+    '  "research", # Gather sources first',
+    '  "write",',
+    ']',
+    "",
+  ].join("\n"), "seo");
+  assert.deepEqual(config.stepIds, ["research", "write"]);
 });
 
 test("Sequence mutations reject traversal and preserve unexpected files", async (t) => {
