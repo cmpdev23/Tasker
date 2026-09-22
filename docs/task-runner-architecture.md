@@ -409,6 +409,16 @@ ancien Run terminal n’a plus d’identité de processus exploitable, le Sheet 
 une récupération locale explicite. Après avoir vérifié et arrêté les processus
 restants, l’utilisateur confirme la reprise ; le backend n’accepte cette action que
 pour un Run terminal sans PID enregistré et persiste un événement de récupération.
+
+La récupération protège le travail contre une condition inconnue; elle ne remplace
+pas la correction d’une cause reproductible. Une notification Codex transitoire de
+reconnexion est conservée comme état de connexion et ne rend pas un turn réussi
+incorrect. Une notification Codex réellement terminale interrompt le turn puis
+arrête l’arbre de processus avant que le Run puisse échouer. Sous Windows, la
+vérification d’un arbre de processus est réessayée après la fermeture normale
+d’une commande; un Run terminal qui conserve un PID est aussi revérifié
+automatiquement au tick suivant. Après ces tentatives, elle demeure un blocage
+de sécurité si l’arbre ne peut toujours pas être certifié arrêté.
 Le worktree est toujours préservé. Sans cette confirmation, la queue demeure bloquée,
 y compris après redémarrage.
 

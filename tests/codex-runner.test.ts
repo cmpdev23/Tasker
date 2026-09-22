@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { APP_SERVER_NOTIFICATION_OPT_OUTS, runCodex, buildCodexAppServerArgs, buildCodexPermissionProfile, buildCodexSandboxPolicy, CODEX_RUN_OUTPUT_SCHEMA, type CodexRunEvent } from "../backend/codex/codex-runner";
+import { APP_SERVER_NOTIFICATION_OPT_OUTS, runCodex, buildCodexAppServerArgs, buildCodexPermissionProfile, buildCodexSandboxPolicy, CODEX_RUN_OUTPUT_SCHEMA, verifyExitedProcessTree, type CodexRunEvent } from "../backend/codex/codex-runner";
 import { probePythonSandbox } from "../backend/codex/codex-sandbox-preflight";
 import type { MainCodexAgentConfig } from "../src/types/codex-agents";
 import type { PythonRuntimeStatus } from "../src/types/project-execution";
@@ -124,6 +124,74 @@ test("stdin remains private and protocol events, stderr, UTF-8 JSON, final struc
   assert.ok(!events.some(event => event.type === "codex" &&
     ["item/agentMessage/delta", "thread/tokenUsage/updated"].includes((event.event as { type?: string }).type ?? "")));
   assert.ok(!JSON.stringify(events).includes("private prompt"));
+});
+
+test("a transient Codex reconnection notice does not fail a completed turn", async t => {
+  const { root, worktree, schema } = await fixture(t);
+  const launch = await stub(root, `
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+        send({method:'error',params:{error:{message:'Reconnecting... 1/5'}}});
+        send({method:'item/completed',params:{item:{id:'item-1',type:'agentMessage',phase:'final_answer',
+          text:JSON.stringify({status:'SUCCESS',summary:'completed after reconnect',blocking_error:null})}}});
+        send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
+      }
+    });
+    process.stdin.on('end', () => process.exit(0));`);
+  const events: CodexRunEvent[] = [];
+  const result = await runCodex({ worktreePath: worktree, prompt: "test", config, timeoutMs: 10_000,
+    outputSchemaPath: schema, onEvent: (event) => events.push(event) }, launch);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.error, null);
+  assert.equal(result.agentResult?.summary, "completed after reconnect");
+  assert.ok(events.some((event) => event.type === "codex" &&
+    (event.event as { type?: string }).type === "connection.reconnecting"));
+});
+
+test("a terminal Codex error interrupts its process before the Run fails", { timeout: 15_000 }, async t => {
+  const { root, worktree, schema } = await fixture(t);
+  const launch = await stub(root, `
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+    process.on('SIGTERM', () => process.exit(0));
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        send({id:3,result:{turn:{id:'turn-1',status:'inProgress'}}});
+        send({method:'error',params:{error:{message:'Codex transport failed.'}}});
+      }
+    });
+    setInterval(() => {}, 1_000);`);
+  const events: CodexRunEvent[] = [];
+  const result = await runCodex({ worktreePath: worktree, prompt: "test", config, timeoutMs: 10_000,
+    terminationGraceMs: 50, outputSchemaPath: schema, onEvent: (event) => events.push(event) }, launch);
+  assert.equal(result.error, "Codex transport failed.");
+  assert.equal(result.terminationVerified, true);
+  assert.ok(events.some((event) => event.type === "termination" && event.reason === "error"));
+});
+
+test("process-tree verification retries transient inspection failures without certifying persistent ones", async () => {
+  let attempts = 0;
+  await verifyExitedProcessTree(1234, async () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error("Windows process snapshot temporarily unavailable.");
+  });
+  assert.equal(attempts, 3);
+
+  attempts = 0;
+  await assert.rejects(() => verifyExitedProcessTree(1234, async () => {
+    attempts += 1;
+    throw new Error("Windows process snapshot unavailable.");
+  }), /snapshot unavailable/);
+  assert.equal(attempts, 3);
 });
 
 test("large image results are accepted without persisting base64 payloads", async t => {

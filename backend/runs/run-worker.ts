@@ -337,7 +337,23 @@ export function createRunner(options: { debug?: RunDebugLogger } = {}) {
         });
       }
       if (!execution) {
-        const blocker = runRepository.unverifiedTermination();
+        let blocker = runRepository.unverifiedTermination();
+        if (blocker && ["SUCCESS", "FAILED", "CANCELLED"].includes(blocker.status) && blocker.codexPid !== null) {
+          try {
+            await verifyExitedProcessTree(blocker.codexPid);
+            const recovered = runRepository.update(blocker.id, { codexPid: null, terminationVerified: true });
+            runRepository.event(recovered.id, "recovery", "Terminal Run process tree verified stopped; queue resumed. Worktree preserved.");
+            debug("terminal-run-process-verified", {
+              runId: recovered.id,
+              projectId: recovered.projectId,
+              taskId: recovered.taskId,
+              status: recovered.status,
+            });
+            blocker = runRepository.unverifiedTermination();
+          } catch {
+            // The existing queue blocker below keeps the worktree intact until the process tree can be certified.
+          }
+        }
         if (blocker) {
           state("queue-blocked-unverified-termination", {
             runId: blocker.id,

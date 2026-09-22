@@ -66,10 +66,16 @@ est le suivant :
 | `turn.completed` | Fin normale du tour | `usage` |
 | `turn.failed` | Échec du tour | `error.message` |
 | `error` | Erreur irrécupérable du flux | `message` |
+| `connection.reconnecting` | Avis de reconnexion Codex non terminal | `message` |
 
 `turn.completed.usage` expose actuellement `input_tokens`,
 `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens` et
 `reasoning_output_tokens`.
+
+Certaines versions de Codex émettent temporairement `error` avec un message de
+la forme `Reconnecting... n/m`, puis terminent le même turn avec succès.
+AgentTasker le normalise en `connection.reconnecting` et ne le rend pas
+terminal; toute autre notification `error` reste une erreur du Run.
 
 ### Types d’items
 

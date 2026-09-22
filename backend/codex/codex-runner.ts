@@ -252,6 +252,8 @@ async function gitReadOnlyRoots(worktreePath: string): Promise<string[]> {
 }
 
 interface WindowsProcess { ProcessId: number; ParentProcessId: number; Started: string }
+const PROCESS_TREE_VERIFICATION_ATTEMPTS = 3;
+const PROCESS_TREE_VERIFICATION_RETRY_MS = 250;
 
 // Toolhelp snapshots work without the WMI/CIM permissions that restricted Windows users lack.
 // Only PID, parent PID and creation time leave this helper; no command lines or environment values.
@@ -331,10 +333,22 @@ public static class AgentTaskerProcessSnapshot {
 `;
 
 async function windowsProcesses(): Promise<WindowsProcess[]> {
-  const { stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-    `${WINDOWS_PROCESS_SNAPSHOT}\nConvertTo-Json -InputObject @([AgentTaskerProcessSnapshot]::Read()) -Compress`],
-  { shell: false, windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 });
-  const parsed: unknown = JSON.parse(stdout);
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      `${WINDOWS_PROCESS_SNAPSHOT}\nConvertTo-Json -InputObject @([AgentTaskerProcessSnapshot]::Read()) -Compress`],
+    { shell: false, windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }));
+  } catch (error) {
+    const failed = error as NodeJS.ErrnoException & { stderr?: string | Buffer; signal?: string | null };
+    const stderr = typeof failed.stderr === "string" ? failed.stderr.trim() : failed.stderr?.toString("utf8").trim();
+    const status = failed.signal ? ` was interrupted by ${failed.signal}`
+      : typeof failed.code === "number" ? ` exited with code ${failed.code}` : " failed";
+    const detail = stderr ? `: ${stderr.slice(0, 1_000)}` : ".";
+    throw new Error(`Windows process snapshot${status}${detail}`, { cause: error });
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(stdout); }
+  catch (error) { throw new Error("Windows process snapshot returned invalid JSON.", { cause: error }); }
   if (!Array.isArray(parsed)) throw new Error("Could not inspect the Windows process tree.");
   return parsed as WindowsProcess[];
 }
@@ -385,7 +399,7 @@ function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
 }
 
 /** Root exit does not imply child exit. This check is read-only, including for a dead/reused root PID. */
-export async function verifyExitedProcessTree(pid: number): Promise<void> {
+async function verifyExitedProcessTreeOnce(pid: number): Promise<void> {
   if (process.platform === "win32") {
     // Toolhelp retains the original PPID after the parent exits, including detached children.
     if (descendants(await windowsProcesses(), pid).length > 0) {
@@ -401,6 +415,30 @@ export async function verifyExitedProcessTree(pid: number): Promise<void> {
     throw error;
   }
   throw new Error("The process exited but its process group still exists; queue must remain blocked.");
+}
+
+/** A just-exited command can race the Windows snapshot helper; retry without ever certifying an unknown process tree. */
+export async function verifyExitedProcessTree(
+  pid: number,
+  verifyOnce: (pid: number) => Promise<void> = verifyExitedProcessTreeOnce,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < PROCESS_TREE_VERIFICATION_ATTEMPTS; attempt += 1) {
+    try {
+      await verifyOnce(pid);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < PROCESS_TREE_VERIFICATION_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, PROCESS_TREE_VERIFICATION_RETRY_MS));
+      }
+    }
+  }
+  throw lastError;
+}
+
+function isTransientReconnectNotice(detail: string): boolean {
+  return /^reconnecting(?:\.{3}|…)\s*\d+\s*\/\s*\d+\s*$/iu.test(detail.trim());
 }
 
 /** Retain descendants across parent exit; do not cancel force escalation when the parent closes. */
@@ -677,8 +715,12 @@ export async function runCodex(
       } else if (message.method === "error") {
         const error = params.error as { message?: unknown } | undefined;
         const detail = typeof error?.message === "string" ? error.message : "Codex reported an execution error.";
-        result.error ??= detail;
-        mappedEvent("error", undefined, { message: detail });
+        if (isTransientReconnectNotice(detail)) mappedEvent("connection.reconnecting", undefined, { message: detail });
+        else {
+          result.error ??= detail;
+          mappedEvent("error", undefined, { message: detail });
+          stop("error");
+        }
       } else {
         mappedEvent(message.method, undefined, params);
       }

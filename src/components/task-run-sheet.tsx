@@ -57,7 +57,6 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   // The Sheet is mounted only after a client-side selection, so this does not
   // participate in the page's server/client hydration boundary.
   const [now, setNow] = useState(() => Date.now());
-  const activityEnd = useRef<HTMLDivElement>(null);
   const runUrl = `/api/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(initialRun.id)}`;
   const inspectedStep = inspectedStepId
     ? sequenceSteps.find((step) => step.id === inspectedStepId) ?? (initialSequenceStep?.id === inspectedStepId ? initialSequenceStep : null)
@@ -148,10 +147,6 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
       clearTimeout(timer);
     };
   }, [runUrl]);
-
-  useEffect(() => {
-    if (follow && isActiveRun(inspectedRun.status)) activityEnd.current?.scrollIntoView({ block: "end", behavior: "auto" });
-  }, [codexActivities.length, visibleEvents.length, follow, inspectedRun.status]);
 
   async function cancel() {
     if (cancelling || cancelRequested) return;
@@ -352,9 +347,15 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
                     <h2 id="codex-execution-title" className="text-sm font-medium">Lancement de l’agent Codex</h2>
                     <p className="mt-1 text-sm leading-6 text-muted-foreground">Codex reçoit le prompt de l’étape et travaille dans le worktree isolé.</p>
                   </div>
-                  <ActivityFeed activities={codexActivities} loading={loading} active={isActiveRun(inspectedRun.status) && inspectedRun.status === "RUNNING"} follow={follow} onFollowChange={setFollow} />
+                  <ActivityFeed
+                    key={inspectedStep ? inspectedStep.id : inspectedRun.id}
+                    activities={codexActivities}
+                    loading={loading}
+                    active={isActiveRun(inspectedRun.status) && inspectedRun.status === "RUNNING"}
+                    follow={follow}
+                    onFollowChange={setFollow}
+                  />
                 </section>
-                <div ref={activityEnd} aria-hidden />
                 <CodexCompletion run={inspectedRun} commands={commands} sequenceStep={Boolean(inspectedStep)} />
                 <ProjectCommands commands={commands.filter((command) => command.phase === "validation")} heading="Validations de l’étape" titleId="validation-commands-title" commandLabel="Validation" />
                 <GitFinalization

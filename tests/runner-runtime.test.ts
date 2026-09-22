@@ -163,6 +163,20 @@ test("unverified termination blocks queued work even when the old run has a term
   } finally { await runner.stop(); await eventually(() => !lock()); }
 });
 
+test("a terminal Run with an exited persisted PID is automatically reverified and unblocks the queue", async () => {
+  const project = await fixture.project();
+  const old = fixture.runRepository.create(project.id, "old", "Old run");
+  fixture.runRepository.update(old.id, { status: "FAILED", terminationVerified: false, codexPid: exitedPid() });
+  const runner = createRunner();
+  try {
+    await eventually(() => fixture.runRepository.get(project.id, old.id).terminationVerified);
+    const recovered = fixture.runRepository.get(project.id, old.id);
+    assert.equal(recovered.codexPid, null);
+    assert.match(fixture.runRepository.events(old.id).at(-1)?.message ?? "", /process tree verified stopped/i);
+    assert.equal(fixture.runRepository.hasUnverifiedTermination(), false);
+  } finally { await runner.stop(); await eventually(() => !lock()); }
+});
+
 test("runtime logs the exact unverified termination blocker without repeating every tick", async () => {
   const project = await fixture.project();
   const old = fixture.runRepository.create(project.id, "old", "Old run");
