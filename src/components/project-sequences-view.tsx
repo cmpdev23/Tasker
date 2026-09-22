@@ -15,6 +15,7 @@ import {
   GitCommitIcon,
   ListOrderedIcon,
   Loader2Icon,
+  PauseIcon,
   PencilIcon,
   PlayIcon,
   PlusIcon,
@@ -27,6 +28,7 @@ import { toast } from "sonner";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
 import { RunIdCopy, RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
 import { SequenceEditorDialog, SequenceStepEditorDialog } from "@/components/sequence-editor-dialogs";
@@ -54,7 +56,18 @@ function legacyIndependentCheckpointFailure(sequence: SequenceDefinition, run: R
 }
 
 function sequencePresentationStatus(sequence: SequenceDefinition, run: Run, steps: SequenceStepRun[]): string {
-  return legacyIndependentCheckpointFailure(sequence, run, steps) ? "SUCCESS" : run.status;
+  if (legacyIndependentCheckpointFailure(sequence, run, steps)) return "SUCCESS";
+  return run.status === "CANCELLED" && run.pauseRequested ? "PAUSED" : run.status;
+}
+
+function successfulSequencePrefixLength(steps: SequenceStepRun[], sequence: SequenceDefinition): number {
+  let length = 0;
+  for (const [index, step] of steps.entries()) {
+    const definition = sequence.steps[index];
+    if (step.status !== "SUCCESS" || step.stepId !== definition?.id || step.stepName !== definition?.name) break;
+    length++;
+  }
+  return length;
 }
 
 export function ProjectSequencesView(props: { project: Project; onNavigateToSettings?: () => void }) {
@@ -76,6 +89,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const [stepEditor, setStepEditor] = useState<SequenceStepDefinition | null | undefined>(undefined);
   const [starting, setStarting] = useState<string | null>(null);
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
+  const [pausingRunId, setPausingRunId] = useState<string | null>(null);
   const [mutating, setMutating] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [selectedStepRun, setSelectedStepRun] = useState<SequenceStepRun | null>(null);
@@ -175,26 +189,28 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (!selectedSequence) return null;
     for (const [index, candidate] of sequenceRuns.entries()) {
       const completed = stepRunsByRunId.get(candidate.id) ?? [];
-      const compatiblePrefix = candidate.status === "SUCCESS" && candidate.terminationVerified && candidate.runBranch && candidate.baseCommit && completed.length > 0 &&
-        completed.length < selectedSequence.steps.length && completed.every((step, index) =>
-          step.status === "SUCCESS" && step.stepId === selectedSequence.steps[index]?.id &&
-          step.stepName === selectedSequence.steps[index]?.name);
+      const completedPrefixLength = successfulSequencePrefixLength(completed, selectedSequence);
+      const compatiblePrefix = ["SUCCESS", "FAILED", "CANCELLED"].includes(candidate.status) &&
+        candidate.terminationVerified && candidate.runBranch && candidate.baseCommit &&
+        completedPrefixLength > 0 && completedPrefixLength < selectedSequence.steps.length;
       if (!compatiblePrefix) continue;
       const suffixWasAttemptedLater = sequenceRuns.slice(0, index).some((later) => {
         const laterSteps = stepRunsByRunId.get(later.id) ?? [];
-        return laterSteps.length === selectedSequence.steps.length && laterSteps.every((step, stepIndex) =>
+        return laterSteps.length > completedPrefixLength && laterSteps.length <= selectedSequence.steps.length && laterSteps.every((step, stepIndex) =>
           step.stepId === selectedSequence.steps[stepIndex]?.id && step.stepName === selectedSequence.steps[stepIndex]?.name) &&
-          laterSteps.slice(completed.length).some((step) => step.status !== "PENDING");
+          laterSteps.slice(completedPrefixLength).some((step) => step.status !== "PENDING");
       });
       if (!suffixWasAttemptedLater) return candidate;
     }
     return null;
   }, [selectedSequence, sequenceRuns, stepRunsByRunId]);
 
-  const continuationStepCount = continuationSource
-    ? selectedSequence!.steps.length - (stepRunsByRunId.get(continuationSource.id)?.length ?? 0)
+  const retainedStepCount = continuationSource && selectedSequence
+    ? successfulSequencePrefixLength(stepRunsByRunId.get(continuationSource.id) ?? [], selectedSequence)
     : 0;
-  const retainedStepCount = selectedSequence ? selectedSequence.steps.length - continuationStepCount : 0;
+  const continuationStepCount = selectedSequence
+    ? selectedSequence.steps.length - retainedStepCount
+    : 0;
 
   function openRunInspector(run: Run) {
     setSelectedStepRun(null);
@@ -221,11 +237,12 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     legacyIndependentCheckpointFailure(selectedSequence, displayRun, displayStepRuns));
 
   const canResumeDisplayRun = useMemo(() => {
-    if (!displayRun || displayRun.kind !== "SEQUENCE" || displayRun.status !== "FAILED" ||
+    const paused = displayRun?.status === "CANCELLED" && displayRun.pauseRequested;
+    if (!displayRun || displayRun.kind !== "SEQUENCE" || (!paused && displayRun.status !== "FAILED") ||
         !displayRun.terminationVerified || displayRun.codexPid !== null) return false;
-    const failedIndex = displayStepRuns.findIndex((step) => step.status === "FAILED");
-    return failedIndex >= 0 && displayStepRuns.slice(0, failedIndex).every((step) => step.status === "SUCCESS") &&
-      displayStepRuns.slice(failedIndex + 1).every((step) => step.status === "SKIPPED");
+    const interruptedIndex = displayStepRuns.findIndex((step) => step.status === (paused ? "CANCELLED" : "FAILED"));
+    return interruptedIndex >= 0 && displayStepRuns.slice(0, interruptedIndex).every((step) => step.status === "SUCCESS") &&
+      displayStepRuns.slice(interruptedIndex + 1).every((step) => step.status === (paused ? "CANCELLED" : "SKIPPED"));
   }, [displayRun, displayStepRuns]);
 
   const selectedHasActiveRun = Boolean(activeSequenceRun);
@@ -290,6 +307,17 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
         : "Reprise ajoutée à la file : Codex continuera dans le worktree préservé, sans perdre les modifications existantes.");
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setResumingRunId(null); }
+  }
+
+  async function pauseSequence(runId: string) {
+    if (pausingRunId) return;
+    setPausingRunId(runId);
+    try {
+      await taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" });
+      setRefresh((value) => value + 1);
+      toast.success("Pause demandée : Codex va s’arrêter et le worktree local sera conservé pour Reprendre.");
+    } catch (caught) { toast.error(errorMessage(caught)); }
+    finally { setPausingRunId(null); }
   }
 
   async function resumePortableCheckpoint() {
@@ -408,7 +436,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
 
       {selectedSequence ? (
         <Frame stacked spacing="sm">
-          <FrameHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <FrameHeader className="gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
             <div className="min-w-0">
               <Button
                 variant="ghost"
@@ -432,7 +460,9 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
               </FrameDescription>
               {canResumeDisplayRun && displayRun && (
                 <p className="mt-1 text-xs text-success">
-                  Reprise locale recommandée : l’étape échouée reprendra dans son worktree préservé. Le checkpoint distant reste destiné à un autre ordinateur.
+                  {displayRun.pauseRequested
+                    ? "Sequence en pause : Reprendre réutilisera ce worktree local et ses modifications partielles. Le checkpoint distant reste destiné à un autre ordinateur."
+                    : "Reprise locale recommandée : l’étape échouée reprendra dans son worktree préservé. Le checkpoint distant reste destiné à un autre ordinateur."}
                 </p>
               )}
               {!canResumeDisplayRun && continuationSource && (
@@ -455,47 +485,84 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
               {displayRun?.warning && <p className="mt-1 text-xs text-warning">{displayRun.warning}</p>}
               {portableCheckpointError && <p className="mt-1 text-xs text-destructive">Checkpoint portable indisponible : {portableCheckpointError}</p>}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {canResumeDisplayRun && displayRun ? (
+            <div className="ml-auto shrink-0 rounded-xl border bg-muted/50 p-1 shadow-xs">
+              <ButtonGroup aria-label="Actions de la Sequence" className="w-max">
+                {canResumeDisplayRun && displayRun ? (
+                  <Button
+                    type="button"
+                    disabled={resumingRunId === displayRun.id || selectedHasActiveRun}
+                    onClick={() => void resumeSequence(displayRun.id)}
+                    title={displayRun.pauseRequested ? "Reprendre la Sequence en pause" : "Reprendre l’étape échouée"}
+                  >
+                    {resumingRunId === displayRun.id ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
+                    Reprendre
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant={selectedHasActiveRun ? "secondary" : "default"}
+                    disabled={!!starting || !selectedSequence.steps.length || selectedHasActiveRun}
+                    onClick={() => void runSequence(selectedSequence.id)}
+                  >
+                    {starting === selectedSequence.id ? (
+                      <Loader2Icon className="animate-spin" />
+                    ) : selectedHasActiveRun ? (
+                      <Loader2Icon className="animate-spin text-info" />
+                    ) : (
+                      <PlayIcon />
+                    )}
+                    {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
+                  </Button>
+                )}
+                {selectedHasActiveRun && activeSequenceRun && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pausingRunId === activeSequenceRun.id || activeSequenceRun.pauseRequested}
+                    onClick={() => void pauseSequence(activeSequenceRun.id)}
+                    title="Arrêter Codex et conserver le worktree local pour reprendre plus tard"
+                  >
+                    {pausingRunId === activeSequenceRun.id || activeSequenceRun.pauseRequested
+                      ? <Loader2Icon className="animate-spin" />
+                      : <PauseIcon />}
+                    {activeSequenceRun.pauseRequested ? "Pause demandée…" : "Pause"}
+                  </Button>
+                )}
+                {!canResumeDisplayRun && portableCheckpoint && portableCheckpoint.status !== "SUCCESS" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={selectedHasActiveRun || !!starting || resumingPortableCheckpoint}
+                    onClick={() => void resumePortableCheckpoint()}
+                    title="Reprendre le checkpoint distant"
+                  >
+                    {resumingPortableCheckpoint ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
+                    Reprendre
+                  </Button>
+                )}
                 <Button
-                  disabled={resumingRunId === displayRun.id || selectedHasActiveRun}
-                  onClick={() => void resumeSequence(displayRun.id)}
-                >
-                  {resumingRunId === displayRun.id ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
-                  Reprendre l’étape échouée
-                </Button>
-              ) : (
-                <Button
-                  variant={selectedHasActiveRun ? "secondary" : "default"}
-                  disabled={!!starting || !selectedSequence.steps.length || selectedHasActiveRun}
-                  onClick={() => void runSequence(selectedSequence.id)}
-                >
-                  {starting === selectedSequence.id ? (
-                    <Loader2Icon className="animate-spin" />
-                  ) : selectedHasActiveRun ? (
-                    <Loader2Icon className="animate-spin text-info" />
-                  ) : (
-                    <PlayIcon />
-                  )}
-                  {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
-                </Button>
-              )}
-              {!canResumeDisplayRun && portableCheckpoint && portableCheckpoint.status !== "SUCCESS" && (
-                <Button
+                  type="button"
+                  size="icon"
                   variant="outline"
-                  disabled={selectedHasActiveRun || !!starting || resumingPortableCheckpoint}
-                  onClick={() => void resumePortableCheckpoint()}
+                  disabled={selectedHasActiveRun || !!definitionError}
+                  onClick={() => setSequenceEditor(selectedSequence)}
+                  aria-label="Configurer la Sequence"
+                  title="Configurer la Sequence"
                 >
-                  {resumingPortableCheckpoint ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
-                  Reprendre le checkpoint distant
+                  <SettingsIcon />
                 </Button>
-              )}
-              <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setSequenceEditor(selectedSequence)}>
-                <PencilIcon />Configurer
-              </Button>
-              <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setStepEditor(null)}>
-                <PlusIcon />Ajouter une étape
-              </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  disabled={selectedHasActiveRun || !!definitionError}
+                  onClick={() => setStepEditor(null)}
+                  aria-label="Ajouter une étape"
+                  title="Ajouter une étape"
+                >
+                  <PlusIcon />
+                </Button>
+              </ButtonGroup>
             </div>
           </FrameHeader>
 
@@ -946,6 +1013,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
         onRerun={sequences.some((sequence) => sequence.id === (selectedRun.sequenceId || selectedRun.taskId))
           ? () => void runSequence(selectedRun.sequenceId || selectedRun.taskId) : undefined}
         onResume={() => void resumeSequence(selectedRun.id)}
+        onPause={() => void pauseSequence(selectedRun.id)}
         onClose={() => { setSelectedRun(null); setSelectedStepRun(null); setRefresh((value) => value + 1); }} />}
     </div>
   );

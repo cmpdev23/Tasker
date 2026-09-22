@@ -1,5 +1,5 @@
 import type { Run } from "@db/schema";
-import { ExternalLinkIcon, FileTextIcon, Loader2Icon, PlayIcon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { ExternalLinkIcon, FileTextIcon, Loader2Icon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
@@ -8,12 +8,14 @@ import { formatRunElapsed } from "./format";
 import { RunIdCopy } from "./run-id-copy";
 import { RunStatusBadge } from "./run-status-badge";
 
-export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, resuming, savingLogs, onCancel, onDelete, onRerun, onResume, onSaveLogs, scopeDescription }: {
+export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, pausing, pauseRequested, deleting, rerunning, resuming, savingLogs, onCancel, onDelete, onRerun, onResume, onPause, onSaveLogs, scopeDescription }: {
   run: Run;
   now: number | null;
   changedFiles: number;
   cancelling: boolean;
   cancelRequested: boolean;
+  pausing: boolean;
+  pauseRequested: boolean;
   deleting: boolean;
   rerunning: boolean;
   resuming?: boolean;
@@ -22,6 +24,7 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
   onDelete?: () => void;
   onRerun?: () => void;
   onResume?: () => void;
+  onPause?: () => void;
   onSaveLogs?: () => void;
   scopeDescription?: string;
 }) {
@@ -40,7 +43,7 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2.5">
             <SheetTitle className="break-words text-lg tracking-tight sm:text-xl">{run.taskName || run.taskId}</SheetTitle>
-            <RunStatusBadge status={run.status} />
+            <RunStatusBadge status={run.status === "CANCELLED" && run.pauseRequested ? "PAUSED" : run.status} />
           </div>
           <SheetDescription render={<div />} className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
             <span>{elapsed}</span>
@@ -94,16 +97,24 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
               Réexécuter
             </Button>
           )}
-          {run.kind === "SEQUENCE" && run.status === "FAILED" && onResume && (
+          {run.kind === "SEQUENCE" && (run.status === "FAILED" || (run.status === "CANCELLED" && run.pauseRequested)) && onResume && (
             <Button
               variant="outline"
               size="sm"
               disabled={resuming}
               onClick={onResume}
-              title="Rejouer les validations après un succès Codex, sans redémarrer l’étape terminée"
+              title={run.pauseRequested
+                ? "Reprendre la Sequence en pause dans son worktree local préservé"
+                : "Rejouer les validations après un succès Codex, sans redémarrer l’étape terminée"}
             >
               {resuming ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
               Reprendre
+            </Button>
+          )}
+          {run.kind === "SEQUENCE" && isActiveRun(run.status) && run.status !== "QUEUED" && onPause && (
+            <Button variant="outline" size="sm" disabled={pausing || pauseRequested} onClick={onPause}>
+              {pausing || pauseRequested ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}
+              {pauseRequested ? "Pause demandée…" : "Pause"}
             </Button>
           )}
           {onDelete && (

@@ -29,7 +29,9 @@ function statusMessage(run: Run, completed: number, total: number, failed: numbe
   if (run.status === "FAILED") return failed
     ? `${completed} étape${completed > 1 ? "s" : ""} réussie${completed > 1 ? "s" : ""} avant l’interruption de la Sequence.`
     : "La Sequence a été interrompue avant qu’une étape ne réussisse.";
-  if (run.status === "CANCELLED") return "La Sequence a été annulée. Les étapes non terminées sont conservées dans cet état.";
+  if (run.status === "CANCELLED") return run.pauseRequested
+    ? "La Sequence est en pause. Reprendre utilisera ce worktree local et conservera les étapes déjà réussies."
+    : "La Sequence a été annulée. Les étapes non terminées sont conservées dans cet état.";
   if (run.status === "QUEUED") return "La Sequence est dans la file d’exécution.";
   return "La Sequence est en cours. Les états des étapes se mettent à jour automatiquement.";
 }

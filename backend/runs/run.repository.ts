@@ -118,9 +118,13 @@ export const runRepository = {
   completeSuccess(projectId: string, runId: string) {
     return sqlite.transaction(() => {
       const run = this.get(projectId, runId);
-      return this.update(runId, { status: run.cancelRequested ? "CANCELLED" : "SUCCESS",
+      const stopped = run.cancelRequested || run.pauseRequested;
+      return this.update(runId, { status: stopped ? "CANCELLED" : "SUCCESS",
         completedAt: new Date().toISOString(),
-        error: run.cancelRequested ? "Cancelled after validation; any completed commit is preserved." : null });
+        error: stopped ? run.pauseRequested
+          ? "Paused after validation; completed commits are preserved for local resume."
+          : "Cancelled after validation; any completed commit is preserved."
+          : null });
     }).immediate();
   },
   event(runId: string, type: string, message: string, rawPayload?: string) {

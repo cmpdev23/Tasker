@@ -63,9 +63,11 @@
   sans modification de fichiers, puis échouer en conservant le worktree si elle est
   encore invalide; une reprise doit rouvrir ce worktree au lieu de recommencer depuis
   la branche de base.
-- Ne jamais appeler « nouvelles étapes » un suffixe déjà tenté par un Run plus
-  récent. Lorsqu’une reprise locale vérifiable existe, elle a priorité dans
-  l’interface; le checkpoint distant sert uniquement au changement d’environnement.
+- Après l’échec ou l’annulation d’une Sequence, Play doit partir du préfixe
+  `SUCCESS` strict le plus récent, jamais d’un ancêtre plus ancien ni d’un Run
+  complet. Créer un worktree neuf depuis son dernier commit vérifié, conserver ces
+  étapes comme acquises et ne remettre à `PENDING` que la première étape non
+  certifiée et les suivantes.
 - Lorsqu’une opération auxiliaire survient après la certification complète d’une
   Sequence (notamment son checkpoint portable), ne pas rétrograder le travail et
   ses PR en `FAILED`. Préserver un avertissement actionnable, puis vérifier que les

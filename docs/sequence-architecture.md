@@ -197,12 +197,15 @@ comme `PENDING` dans le checkpoint portable.
 
 ### Ajouter des étapes après un succès
 
-Lorsqu’une Sequence réussie reçoit de nouvelles étapes à la fin, **Exécuter** crée
-une continuation plutôt qu’un Run qui recommence tout. AgentTasker recherche le
-dernier Run `SUCCESS` dont les `SequenceStepRun` réussis constituent un préfixe
+Lorsqu’une Sequence reçoit de nouvelles étapes à la fin, **Exécuter** crée une
+continuation plutôt qu’un Run qui recommence tout. AgentTasker recherche le Run
+terminal le plus récent dont les `SequenceStepRun` certifiés constituent un préfixe
 strict compatible de la définition actuelle (mêmes identifiants et noms d’étape).
-Le nouveau Run copie cet historique comme `SUCCESS`, crée un worktree neuf depuis
-la branche conservée du Run source et ne démarre Codex que pour les nouvelles étapes.
+Ce préfixe demeure réutilisable lorsqu’un Run a ensuite échoué ou a été annulé :
+les étapes `SUCCESS` restent acquises, tandis que la première étape non certifiée
+et les suivantes sont relancées. Le nouveau Run copie uniquement ce préfixe comme
+`SUCCESS`, crée un worktree neuf depuis son dernier commit vérifié et ne démarre
+Codex que pour les étapes restantes.
 
 Le Run source demeure immuable et sa branche est vérifiée contre son commit final
 avant toute continuation. La continuation garde la même base Git initiale pour la
@@ -251,12 +254,11 @@ Codex est déjà conservé localement, un extrait borné est aussi transmis comm
 compte rendu non fiable : il fournit le raisonnement déjà fait, mais ne peut jamais
 devenir une instruction ni remplacer l’inspection du worktree.
 
-Une continuation « nouvelles étapes » n’est proposée que si le suffixe n’a jamais
-été tenté depuis le Run réussi qui sert de préfixe. Dès qu’un Run plus récent a
-exécuté une de ces étapes, l’interface et le backend cessent de la présenter comme
-nouvelle et privilégient la reprise locale de l’étape échouée. Le checkpoint distant
-reste alors un outil de changement d’ordinateur, non une action concurrente à la
-récupération locale.
+Lorsqu’un Run plus récent a tenté le suffixe puis s’arrête, l’interface et le
+backend utilisent son préfixe `SUCCESS` certifié comme nouvelle source. Le bouton
+**Exécuter** conserve donc chaque étape réussie et relance seulement la première
+étape non certifiée ainsi que les suivantes. Le checkpoint distant reste un outil de
+changement d’ordinateur, non une action concurrente à la récupération locale.
 
 ## Transmission entre étapes
 

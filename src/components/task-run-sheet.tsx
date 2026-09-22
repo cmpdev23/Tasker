@@ -34,7 +34,7 @@ function legacyIndependentCheckpointFailure(run: Run, steps: SequenceStepRun[]):
   } catch { return false; }
 }
 
-export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
+export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerunning = false, resuming = false, onClose, onRerun, onResume, onPause }: {
   projectId: string;
   initialRun: Run;
   initialSequenceStep?: SequenceStepRun | null;
@@ -43,6 +43,7 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   onClose: () => void;
   onRerun?: () => void;
   onResume?: () => void;
+  onPause?: () => void;
 }) {
   const [run, setRun] = useState(initialRun);
   const [events, setEvents] = useState<RunEvent[]>([]);
@@ -55,12 +56,14 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   const [queue, setQueue] = useState<RunQueueStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [savingLogs, setSavingLogs] = useState(false);
   const [publishingDraft, setPublishingDraft] = useState(false);
   const [draftPublicationError, setDraftPublicationError] = useState<string | null>(null);
   const [cancelRequested, setCancelRequested] = useState(initialRun.cancelRequested);
+  const [pauseRequested, setPauseRequested] = useState(initialRun.pauseRequested);
   const [inspectedStepId, setInspectedStepId] = useState<string | null>(initialSequenceStep?.id ?? null);
   const [follow, setFollow] = useState(() => isActiveRun(initialRun.status));
   // The Sheet is mounted only after a client-side selection, so this does not
@@ -100,11 +103,12 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   const commandEvents = globalSequenceInspector ? events : visibleEvents;
   const commands = useMemo(() => projectCommandActivities(commandEvents, inspectedRun), [commandEvents, inspectedRun]);
   const failedCommand = commands.find(command => command.status === "failed" || command.status === "timed-out");
-  const failedStepCanResume = inspectedStep
-    ? inspectedStep.status === "FAILED" && inspectedStep.exitCode === 0
-    : sequenceSteps.some((step) => step.status === "FAILED" && step.exitCode === 0);
-  const canResumeSequence = run.kind === "SEQUENCE" && run.status === "FAILED" && run.terminationVerified &&
-    run.codexPid === null && failedStepCanResume;
+  const pausedRun = run.status === "CANCELLED" && run.pauseRequested;
+  const interruptedStepCanResume = inspectedStep
+    ? inspectedStep.status === (pausedRun ? "CANCELLED" : "FAILED")
+    : sequenceSteps.some((step) => step.status === (pausedRun ? "CANCELLED" : "FAILED"));
+  const canResumeSequence = run.kind === "SEQUENCE" && (run.status === "FAILED" || pausedRun) && run.terminationVerified &&
+    run.codexPid === null && interruptedStepCanResume;
   const canPublishStepDraft = Boolean(inspectedStep && inspectedStep.status === "SUCCESS" && inspectedStep.commitHash &&
     !inspectedStep.pullRequestUrl && !isActiveRun(run.status) && run.terminationVerified && run.codexPid === null);
   const headerRun = useMemo<Run>(() => {
@@ -139,6 +143,7 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
         if (Array.isArray(data.sequenceSteps)) setSequenceSteps(data.sequenceSteps);
         if (data.queue) setQueue(data.queue);
         if (data.run.cancelRequested) setCancelRequested(true);
+        if (data.run.pauseRequested) setPauseRequested(true);
         const relevantEvents = data.events.filter(isRelevantRunInspectorEvent);
         setSuppressedEventCount((current) => current + data.events.length - relevantEvents.length);
         setEvents((current) => {
@@ -179,6 +184,20 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
       setCancelError(errorMessage(caught));
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function pause() {
+    if (pausing || pauseRequested) return;
+    setPausing(true);
+    setCancelError(null);
+    try {
+      await taskRequest(runUrl + "/pause", { method: "POST" });
+      setPauseRequested(true);
+    } catch (caught) {
+      setCancelError(errorMessage(caught));
+    } finally {
+      setPausing(false);
     }
   }
 
@@ -291,6 +310,8 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
           changedFiles={changedFiles}
           cancelling={cancelling}
           cancelRequested={cancelRequested}
+          pausing={pausing}
+          pauseRequested={pauseRequested}
           deleting={deleting}
           rerunning={rerunning}
           resuming={resuming}
@@ -299,6 +320,7 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
           onDelete={!inspectedStep && isRemovableRun(run) ? () => void removeRun() : undefined}
           onRerun={inspectedStep ? undefined : onRerun}
           onResume={canResumeSequence ? onResume : undefined}
+          onPause={!inspectedStep && run.kind === "SEQUENCE" ? pause : undefined}
           onSaveLogs={inspectedStep ? undefined : saveLogs}
           scopeDescription={inspectedStep
             ? `Étape ${inspectedStep.position + 1} de la séquence « ${run.taskName} »`

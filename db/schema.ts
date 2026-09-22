@@ -80,6 +80,8 @@ export const runs = sqliteTable("runs", {
   diff: text("diff"),
   resolvedConfig: text("resolved_config"),
   cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
+  /** A local Sequence pause uses the same safe process termination as cancellation, but remains resumable in its preserved worktree. */
+  pauseRequested: integer("pause_requested", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
 }, (table) => [index("runs_project_created").on(table.projectId, table.createdAt),
   uniqueIndex("runs_resume_source").on(table.resumeFromRunId),

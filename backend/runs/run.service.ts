@@ -44,6 +44,24 @@ export const runService = {
       return cancelled;
     }).immediate();
   },
+  pauseSequence(projectId: string, runId: string) {
+    return sqlite.transaction(() => {
+      const run = runRepository.get(projectId, runId);
+      if (run.kind !== "SEQUENCE") throw new ConflictError("Seules les Sequences peuvent être mises en pause.");
+      if (!ACTIVE_STATUSES.includes(run.status)) throw new ConflictError("Cette Sequence est déjà terminée.");
+      runRepository.event(runId, "pause", "Pause requested; Codex will stop and the local worktree will be preserved for resume.");
+      const paused = runRepository.update(runId, run.status === "QUEUED"
+        ? { status: "CANCELLED", pauseRequested: true, completedAt: new Date().toISOString() }
+        : { pauseRequested: true });
+      logRunDebug("sequence-pause-requested", {
+        runId,
+        projectId,
+        previousStatus: run.status,
+        resultingStatus: paused.status,
+      });
+      return paused;
+    }).immediate();
+  },
   confirmTermination(projectId: string, runId: string) {
     return sqlite.transaction(() => {
       const run = runRepository.get(projectId, runId);

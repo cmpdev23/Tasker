@@ -195,6 +195,102 @@ test("a newer failed Run prevents an older prefix from being presented as new st
   assert.equal(enqueued.resumeStage, null);
 });
 
+test("an expanded Sequence continues from the certified prefix of a failed Run", async () => {
+  const { project, sequence } = await sequenceFixture();
+  const initialDefinition = { ...sequence, steps: sequence.steps.slice(0, 1) };
+  const source = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  sequenceRunRepository.initialize(source.id, initialDefinition);
+  fixture.runRepository.update(source.id, {
+    status: "SUCCESS",
+    terminationVerified: true,
+    runBranch: `tasker/run-${source.id}-${sequence.id}`,
+    baseCommit: "a".repeat(40),
+    completedAt: new Date().toISOString(),
+  });
+  sequenceRunRepository.update(source.id, initialDefinition.steps[0].id, {
+    status: "SUCCESS",
+    completedAt: new Date().toISOString(),
+  });
+
+  const attemptedDefinition = { ...sequence, steps: sequence.steps.slice(0, 2) };
+  const attempted = fixture.runRepository.createSequenceContinuation(source);
+  sequenceRunRepository.initializeContinuation(attempted.id, source.id, attemptedDefinition);
+  fixture.runRepository.update(attempted.id, {
+    status: "FAILED",
+    terminationVerified: true,
+    runBranch: `tasker/run-${attempted.id}-${sequence.id}`,
+    baseCommit: "a".repeat(40),
+    completedAt: new Date().toISOString(),
+  });
+  sequenceRunRepository.update(attempted.id, attemptedDefinition.steps[1].id, {
+    status: "FAILED",
+    completedAt: new Date().toISOString(),
+  });
+
+  const enqueued = await sequenceRunService.enqueue(project.id, sequence.id);
+  assert.equal(enqueued.resumeFromRunId, attempted.id);
+  assert.equal(enqueued.resumeStage, "CONTINUING");
+  assert.deepEqual(
+    sequenceRunRepository.list(enqueued.id).map((step) => step.status),
+    ["SUCCESS", "PENDING", "PENDING"],
+  );
+});
+
+test("Play does not rerun certified steps after a failed continuation", { timeout: 60_000 }, async () => {
+  const { project, sequence: initialSequence } = await sequenceFixture();
+  let initialCalls = 0;
+  const initialCodex: typeof runCodex = async (options) => {
+    initialCalls++;
+    fs.writeFileSync(path.join(options.worktreePath, `initial-${initialCalls}.txt`), `completed ${initialCalls}`);
+    const agentResult = { status: "SUCCESS" as const, summary: `Initial step ${initialCalls}`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  const initialRun = fixture.runRepository.createSequence(project.id, initialSequence.id, initialSequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), initialCodex);
+  assert.equal(fixture.runRepository.get(project.id, initialRun.id).status, "SUCCESS");
+  assert.equal(initialCalls, 3);
+
+  const withFailedStep = await sequenceService.createStep(project.id, initialSequence.id, {
+    name: "Publish", instructions: "Publish the completed work.", expectChanges: true,
+  });
+  const failedRun = await sequenceRunService.enqueue(project.id, withFailedStep.id);
+  const failedCodex: typeof runCodex = async () => {
+    const agentResult = { status: "FAILURE" as const, summary: "Publish blocked", blocking_error: "Missing source" };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: "Missing source", agentResult, terminationVerified: true };
+  };
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), failedCodex);
+  assert.equal(fixture.runRepository.get(project.id, failedRun.id).status, "FAILED");
+  assert.deepEqual(sequenceRunRepository.list(failedRun.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS", "FAILED"]);
+
+  const expanded = await sequenceService.createStep(project.id, initialSequence.id, {
+    name: "Promote", instructions: "Promote the published work.", expectChanges: true,
+  });
+  const continued = await sequenceRunService.enqueue(project.id, expanded.id);
+  assert.equal(continued.resumeFromRunId, failedRun.id);
+  assert.equal(continued.resumeStage, "CONTINUING");
+  assert.deepEqual(sequenceRunRepository.list(continued.id).map((step) => step.status), [
+    "SUCCESS", "SUCCESS", "SUCCESS", "PENDING", "PENDING",
+  ]);
+
+  let resumedCalls = 0;
+  const resumedCodex: typeof runCodex = async (options) => {
+    resumedCalls++;
+    assert.equal(fs.readFileSync(path.join(options.worktreePath, "initial-1.txt"), "utf8"), "completed 1");
+    fs.writeFileSync(path.join(options.worktreePath, `resumed-${resumedCalls}.txt`), `completed ${resumedCalls}`);
+    const agentResult = { status: "SUCCESS" as const, summary: `Resumed step ${resumedCalls}`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), resumedCodex);
+  assert.equal(fixture.runRepository.get(project.id, continued.id).status, "SUCCESS");
+  assert.equal(resumedCalls, 2, "only the failed and newly added steps should run");
+  assert.deepEqual(sequenceRunRepository.list(continued.id).map((step) => step.status), [
+    "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS",
+  ]);
+});
+
 test("a failed Sequence step stops every following step", { timeout: 60_000 }, async () => {
   const { project, sequence } = await sequenceFixture(true, "after_each_step");
   let call = 0;
@@ -524,4 +620,54 @@ test("an execution resume keeps the failed step worktree and restarts only that 
   assert.equal(resumedCalls, 3);
   assert.deepEqual(sequenceRunRepository.list(resumed.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
   assert.match(git(repo, "show", `${complete.runBranch}:research.txt`), /preserved partial research and completed/);
+});
+
+test("a paused Sequence preserves its worktree and resumes only its unfinished suffix locally", { timeout: 60_000 }, async () => {
+  const { project, sequence } = await sequenceFixture();
+  const source = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  let sourceCalls = 0;
+  const pausingCodex: typeof runCodex = async (options) => {
+    sourceCalls++;
+    if (sourceCalls === 1) {
+      fs.writeFileSync(path.join(options.worktreePath, "research.txt"), "certified research");
+    } else {
+      fs.writeFileSync(path.join(options.worktreePath, "draft.txt"), "partial draft preserved across pause");
+      fixture.runService.pauseSequence(project.id, source.id);
+    }
+    const result = { status: "SUCCESS" as const, summary: `Step ${sourceCalls} completed before pause`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(result), agentResult: result, error: null, terminationVerified: true };
+  };
+
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), pausingCodex);
+  const paused = fixture.runRepository.get(project.id, source.id);
+  assert.equal(paused.status, "CANCELLED");
+  assert.equal(paused.pauseRequested, true);
+  assert.equal(paused.terminationVerified, true);
+  assert.ok(paused.worktreePath);
+  assert.equal(fs.readFileSync(path.join(paused.worktreePath!, "draft.txt"), "utf8"), "partial draft preserved across pause");
+  assert.deepEqual(sequenceRunRepository.list(source.id).map((step) => step.status), ["SUCCESS", "CANCELLED", "CANCELLED"]);
+  await assert.rejects(() => sequenceRunService.enqueue(project.id, sequence.id), /en pause/);
+
+  const resumed = await sequenceRunService.resume(project.id, source.id);
+  assert.equal(resumed.resumeStage, "VALIDATING", "Codex completed the paused step, so only its validation is replayed");
+  assert.equal(resumed.resumeStepId, sequence.steps[1].id);
+  assert.deepEqual(sequenceRunRepository.list(resumed.id).map((step) => step.status), ["SUCCESS", "PENDING", "PENDING"]);
+
+  let resumedCalls = 0;
+  const resumedCodex: typeof runCodex = async (options) => {
+    resumedCalls++;
+    assert.equal(options.worktreePath, paused.worktreePath);
+    assert.equal(fs.readFileSync(path.join(options.worktreePath, "draft.txt"), "utf8"), "partial draft preserved across pause");
+    fs.writeFileSync(path.join(options.worktreePath, "review.txt"), "reviewed preserved draft");
+    const result = { status: "SUCCESS" as const, summary: "Review completed after local resume", blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(result), agentResult: result, error: null, terminationVerified: true };
+  };
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), resumedCodex);
+
+  const completed = fixture.runRepository.get(project.id, resumed.id);
+  assert.equal(completed.status, "SUCCESS", completed.error ?? undefined);
+  assert.equal(resumedCalls, 1, "the already-completed paused Codex step must not be restarted");
+  assert.deepEqual(sequenceRunRepository.list(resumed.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
 });

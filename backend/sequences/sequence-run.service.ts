@@ -1,7 +1,7 @@
 import { ConflictError } from "../errors";
 import { runRepository } from "../runs/run.repository";
 import { logRunDebug } from "../runs/run-logger";
-import { sequenceRunRepository } from "./sequence-run.repository";
+import { sequenceRunRepository, successfulSequencePrefixLength } from "./sequence-run.repository";
 import { sequenceService } from "./sequence.service";
 import { projectService } from "../projects/project.service";
 import { parseProjectGitSettings } from "../tasker/project-git";
@@ -19,6 +19,9 @@ export const sequenceRunService = {
       throw new ConflictError("Cette Sequence possède déjà un Run actif ou en attente.");
     }
     const history = runRepository.listSequences(projectId, sequence.id);
+    if (findUnresumedPausedSequence(history)) {
+      throw new ConflictError("Cette Sequence est en pause dans cet environnement. Utilisez Reprendre pour conserver son worktree et ses modifications partielles.");
+    }
     const continuationSource = findUnattemptedContinuationSource(sequence, history);
     const run = continuationSource
       ? runRepository.createSequenceContinuation(continuationSource)
@@ -81,6 +84,7 @@ export const sequenceRunService = {
   },
   async resume(projectId: string, runId: string) {
     const source = runRepository.get(projectId, runId);
+    if (isPausedSequenceRun(source)) return this.resumePaused(projectId, runId);
     const sourceSteps = sequenceRunRepository.list(source.id);
     const failed = sourceSteps.find((step) => step.status === "FAILED");
     const hasFailedValidation = Boolean(failed && failed.exitCode === 0 && isSuccessfulCodexResult(failed.result) &&
@@ -93,6 +97,26 @@ export const sequenceRunService = {
         } catch { return false; }
       }));
     return hasFailedValidation ? this.resumeValidation(projectId, runId) : this.resumeExecution(projectId, runId);
+  },
+  async resumePaused(projectId: string, runId: string) {
+    const source = runRepository.get(projectId, runId);
+    assertPausedSequence(source);
+    const sourceSteps = sequenceRunRepository.list(source.id);
+    const pausedIndex = sourceSteps.findIndex((step) => step.status === "CANCELLED");
+    const paused = pausedIndex < 0 ? undefined : sourceSteps[pausedIndex];
+    if (!paused || sourceSteps.slice(0, pausedIndex).some((step) => step.status !== "SUCCESS") ||
+        sourceSteps.slice(pausedIndex + 1).some((step) => step.status !== "CANCELLED")) {
+      throw new ConflictError("La progression de cette Sequence en pause ne permet pas une reprise sûre.");
+    }
+    await sequenceService.get(projectId, source.sequenceId!);
+    if (paused.exitCode === 0 && isSuccessfulCodexResult(paused.result)) {
+      const resumed = runRepository.createSequenceValidationResume(source, paused.stepId);
+      sequenceRunRepository.initializeValidationResume(resumed.id, source.id, paused.stepId);
+      return resumed;
+    }
+    const resumed = runRepository.createSequenceExecutionResume(source, paused.stepId);
+    sequenceRunRepository.initializeExecutionResume(resumed.id, source.id, paused.stepId);
+    return resumed;
   },
   async portableCheckpoint(projectId: string, sequenceId: string): Promise<PortableSequenceCheckpoint | null> {
     const [project, sequence] = await Promise.all([projectService.getProjectById(projectId), sequenceService.get(projectId, sequenceId)]);
@@ -126,14 +150,15 @@ export const sequenceRunService = {
   },
 };
 
-function isCompatibleSuccessfulPrefix(candidate: Run, steps: SequenceStepRun[], sequence: SequenceDefinition): boolean {
-  return candidate.status === "SUCCESS" && candidate.terminationVerified && Boolean(candidate.runBranch) && Boolean(candidate.baseCommit) &&
-    steps.length > 0 && steps.length < sequence.steps.length && steps.every((step, index) =>
-      step.status === "SUCCESS" && step.stepId === sequence.steps[index]?.id && step.stepName === sequence.steps[index]?.name);
+function isCompatibleCertifiedPrefix(candidate: Run, steps: SequenceStepRun[], sequence: SequenceDefinition): boolean {
+  const completedPrefixLength = successfulSequencePrefixLength(steps, sequence);
+  return ["SUCCESS", "FAILED", "CANCELLED"].includes(candidate.status) && candidate.terminationVerified &&
+    Boolean(candidate.runBranch) && Boolean(candidate.baseCommit) &&
+    completedPrefixLength > 0 && completedPrefixLength < sequence.steps.length;
 }
 
 function isLaterAttemptOfSuffix(steps: SequenceStepRun[], sequence: SequenceDefinition, prefixLength: number): boolean {
-  return steps.length === sequence.steps.length && steps.every((step, index) =>
+  return steps.length > prefixLength && steps.length <= sequence.steps.length && steps.every((step, index) =>
     step.stepId === sequence.steps[index]?.id && step.stepName === sequence.steps[index]?.name) &&
     steps.slice(prefixLength).some((step) => step.status !== "PENDING");
 }
@@ -141,9 +166,10 @@ function isLaterAttemptOfSuffix(steps: SequenceStepRun[], sequence: SequenceDefi
 function findUnattemptedContinuationSource(sequence: SequenceDefinition, history: Run[]): Run | null {
   for (const [index, candidate] of history.entries()) {
     const completed = sequenceRunRepository.list(candidate.id);
-    if (!isCompatibleSuccessfulPrefix(candidate, completed, sequence)) continue;
+    if (!isCompatibleCertifiedPrefix(candidate, completed, sequence)) continue;
+    const completedPrefixLength = successfulSequencePrefixLength(completed, sequence);
     if (!history.slice(0, index).some((later) =>
-      isLaterAttemptOfSuffix(sequenceRunRepository.list(later.id), sequence, completed.length))) return candidate;
+      isLaterAttemptOfSuffix(sequenceRunRepository.list(later.id), sequence, completedPrefixLength))) return candidate;
   }
   return null;
 }
@@ -152,6 +178,24 @@ function assertResumableSequence(source: ReturnType<typeof runRepository.get>) {
   if (source.kind !== "SEQUENCE" || !source.sequenceId) throw new ConflictError("Seules les Sequences peuvent être reprises.");
   if (source.status !== "FAILED" || !source.terminationVerified || source.codexPid !== null) {
     throw new ConflictError("Ce Run n’est pas dans un état sûr pour une reprise.");
+  }
+  if (!source.worktreePath || !source.runBranch || !source.baseCommit || !source.baseRemote || !source.baseBranch) {
+    throw new ConflictError("Le worktree Git préservé est incomplet; la reprise est refusée.");
+  }
+}
+
+function isPausedSequenceRun(run: Run): boolean {
+  return run.kind === "SEQUENCE" && run.status === "CANCELLED" && run.pauseRequested;
+}
+
+function findUnresumedPausedSequence(history: Run[]): Run | undefined {
+  return history.find((candidate) => isPausedSequenceRun(candidate) &&
+    !history.some((later) => later.resumeFromRunId === candidate.id));
+}
+
+function assertPausedSequence(source: ReturnType<typeof runRepository.get>) {
+  if (!isPausedSequenceRun(source) || !source.terminationVerified || source.codexPid !== null) {
+    throw new ConflictError("Cette Sequence n’est pas dans un état sûr pour une reprise locale après pause.");
   }
   if (!source.worktreePath || !source.runBranch || !source.baseCommit || !source.baseRemote || !source.baseBranch) {
     throw new ConflictError("Le worktree Git préservé est incomplet; la reprise est refusée.");

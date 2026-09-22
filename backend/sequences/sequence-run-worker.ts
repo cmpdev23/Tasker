@@ -32,7 +32,7 @@ import {
 } from "../runs/project-command-runner";
 import { RUNNER_CONFIG } from "../runs/runner-config";
 import { runRepository } from "../runs/run.repository";
-import { sequenceRunRepository } from "./sequence-run.repository";
+import { sequenceRunRepository, successfulSequencePrefixLength } from "./sequence-run.repository";
 import { sequenceService } from "./sequence.service";
 import { publishRunWorktree } from "../git/run-publication.service";
 import { projectRuntimePreferenceService } from "../runs/project-runtime-preference.service";
@@ -182,7 +182,8 @@ export async function executeSequenceRun(
     }
   };
   const cancellation = setInterval(() => {
-    if (runRepository.get(run.projectId, run.id).cancelRequested) controller.abort();
+    const current = runRepository.get(run.projectId, run.id);
+    if (current.cancelRequested || current.pauseRequested) controller.abort();
   }, 500);
 
   try {
@@ -201,18 +202,21 @@ export async function executeSequenceRun(
       throw new Error("Unsupported Run resume state.");
     }
     const sourceSteps = sourceRun ? sequenceRunRepository.list(sourceRun.id) : isPortableContinuation ? sequenceRunRepository.list(run.id) : [];
+    const completedContinuationPrefix = isContinuation
+      ? successfulSequencePrefixLength(sourceSteps, sequence)
+      : 0;
     const resumeIndex = isValidationResume || isExecutionResume ? sourceSteps.findIndex((step) => step.stepId === run.resumeStepId) : -1;
-    if ((isValidationResume || isExecutionResume) && (resumeIndex < 0 || sourceSteps[resumeIndex].status !== "FAILED")) {
-      throw new Error("The source Sequence Run no longer has the requested failed step.");
+    if ((isValidationResume || isExecutionResume) && (resumeIndex < 0 || !["FAILED", "CANCELLED"].includes(sourceSteps[resumeIndex].status))) {
+      throw new Error("The source Sequence Run no longer has the requested failed or paused step.");
     }
     if (isValidationResume || isExecutionResume || isContinuation || isPortableContinuation) {
       const currentSteps = sequenceRunRepository.list(run.id);
       if (currentSteps.length !== sequence.steps.length || currentSteps.some((step, index) => step.stepId !== sequence.steps[index]?.id)) {
         throw new Error("The current Sequence definition changed after its continuation was queued.");
       }
-      if (isContinuation && (!sourceRun || sourceRun.status !== "SUCCESS" || !sourceRun.terminationVerified ||
-        sourceSteps.length === 0 || sourceSteps.length >= sequence.steps.length || sourceSteps.some((step, index) =>
-          step.status !== "SUCCESS" || step.stepId !== sequence.steps[index]?.id || step.stepName !== sequence.steps[index]?.name))) {
+      if (isContinuation && (!sourceRun || !["SUCCESS", "FAILED", "CANCELLED"].includes(sourceRun.status) ||
+        !sourceRun.terminationVerified || completedContinuationPrefix === 0 ||
+        completedContinuationPrefix >= sequence.steps.length)) {
         throw new Error("The completed Sequence Run is not a compatible prefix of the current definition.");
       }
     } else {
@@ -249,7 +253,7 @@ export async function executeSequenceRun(
     if (independentSteps && (!gitSettings.push || !gitSettings.createPullRequest)) {
       throw new Error("Independent per-step pull requests require Project Git publication and GitHub PR creation.");
     }
-    const continuationIndex = isContinuation ? sourceSteps.length : isPortableContinuation
+    const continuationIndex = isContinuation ? completedContinuationPrefix : isPortableContinuation
       ? sourceSteps.findIndex((step) => step.status !== "SUCCESS") : -1;
     if (isPortableContinuation && continuationIndex <= 0) throw new Error("The portable checkpoint has no completed Sequence prefix.");
     previousPublicationBranch = isValidationResume || isContinuation || isPortableContinuation
@@ -427,9 +431,10 @@ export async function executeSequenceRun(
         exitCode: result.exitCode,
         result: result.lastAgentMessage === null ? null : redact(result.lastAgentMessage),
       });
-      const cancelled = runRepository.get(run.projectId, run.id).cancelRequested;
-      if (cancelled || result.cancelled || result.timedOut || result.exitCode !== 0 || result.error) {
-        throw new Error(result.error || (cancelled ? "Sequence cancelled." : result.timedOut
+      const current = runRepository.get(run.projectId, run.id);
+      const stopped = current.cancelRequested || current.pauseRequested;
+      if (stopped || result.cancelled || result.timedOut || result.exitCode !== 0 || result.error) {
+        throw new Error(result.error || (current.pauseRequested ? "Sequence paused." : current.cancelRequested ? "Sequence cancelled." : result.timedOut
           ? `Step "${step.name}" timed out.` : `Step "${step.name}" did not complete successfully.`));
       }
 
@@ -511,8 +516,8 @@ export async function executeSequenceRun(
       activeStepId = null;
       } catch (error) {
         const message = redact(error instanceof Error ? error.message : String(error));
-        const cancelled = runRepository.get(run.projectId, run.id).cancelRequested;
-        if (cancelled || !continueAfterFailure) throw error;
+        const current = runRepository.get(run.projectId, run.id);
+        if (current.cancelRequested || current.pauseRequested || !continueAfterFailure) throw error;
         const failed = sequenceRunRepository.get(run.id, step.id);
         if (["PENDING", "RUNNING", "VALIDATING"].includes(failed.status)) {
           let diff: string | null = null;
@@ -538,8 +543,11 @@ export async function executeSequenceRun(
       }
     }
 
-    if (runRepository.get(run.projectId, run.id).cancelRequested) {
-      throw new Error("Sequence cancelled after its final validation; completed commits are preserved.");
+    const completionState = runRepository.get(run.projectId, run.id);
+    if (completionState.cancelRequested || completionState.pauseRequested) {
+      throw new Error(completionState.pauseRequested
+        ? "Sequence paused after its final validation; completed commits are preserved for local resume."
+        : "Sequence cancelled after its final validation; completed commits are preserved.");
     }
     const cumulative = await inspectRunChanges({ ...worktree, baseCommit: isContinuation ? sourceRun!.baseCommit! : worktree.baseCommit });
     runRepository.update(run.id, {
@@ -594,28 +602,31 @@ export async function executeSequenceRun(
         runRepository.update(run.id, { diff: `${changes.status}\n${changes.diff}`, commitHash: latestCommit });
       } catch { /* Preserve the worktree even if Git inspection itself failed. */ }
     }
-    const cancelled = runRepository.get(run.projectId, run.id).cancelRequested;
+    const current = runRepository.get(run.projectId, run.id);
+    const paused = current.pauseRequested;
+    const cancelled = current.cancelRequested;
+    const stopped = paused || cancelled;
     if (activeStepId) {
       const step = sequenceRunRepository.get(run.id, activeStepId);
       if (["PENDING", "RUNNING", "VALIDATING"].includes(step.status)) {
         sequenceRunRepository.update(run.id, activeStepId, {
-          status: cancelled ? "CANCELLED" : "FAILED",
+          status: stopped ? "CANCELLED" : "FAILED",
           error: message,
           completedAt: new Date().toISOString(),
         });
       }
     }
-    sequenceRunRepository.stopRemaining(run.id, cancelled ? "CANCELLED" : "SKIPPED",
-      cancelled ? "Sequence cancelled." : "A previous Sequence step failed.");
+    sequenceRunRepository.stopRemaining(run.id, stopped ? "CANCELLED" : "SKIPPED",
+      paused ? "Sequence paused." : cancelled ? "Sequence cancelled." : "A previous Sequence step failed.");
     runRepository.update(run.id, {
-      status: cancelled ? "CANCELLED" : "FAILED",
+      status: stopped ? "CANCELLED" : "FAILED",
       error: message,
       currentStepId: null,
       completedAt: new Date().toISOString(),
     });
-    try { await syncPortableCheckpoint?.(cancelled ? "CANCELLED" : "FAILED"); }
+    try { await syncPortableCheckpoint?.(stopped ? "CANCELLED" : "FAILED"); }
     catch (checkpointError) { event("checkpoint", `Portable checkpoint could not be updated: ${redact(checkpointError instanceof Error ? checkpointError.message : String(checkpointError))}`); }
-    event("status", `${cancelled ? "Sequence cancelled" : "Sequence failed"}: ${message}. Existing worktree and branch preserved.`);
+    event("status", `${paused ? "Sequence paused" : cancelled ? "Sequence cancelled" : "Sequence failed"}: ${message}. Existing worktree and branch preserved.`);
   } finally {
     clearInterval(cancellation);
   }

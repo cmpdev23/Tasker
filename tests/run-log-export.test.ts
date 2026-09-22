@@ -110,6 +110,7 @@ test("formatRunLog formats comprehensive text log including metadata, config, di
     diff: " M pages/seo.tsx\n+export default function Page() {}",
     resolvedConfig: JSON.stringify({ model: "gpt-5-codex", sandbox: "read-only" }),
     cancelRequested: false,
+    pauseRequested: false,
     createdAt: "2026-09-11T12:00:00.000Z",
   };
 

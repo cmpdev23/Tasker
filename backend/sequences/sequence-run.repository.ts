@@ -6,6 +6,25 @@ import type { SequenceDefinition } from "../../src/types/sequences";
 import { NotFoundError } from "../errors";
 import type { PortableSequenceCheckpoint } from "./sequence-checkpoint.service";
 
+export function successfulSequencePrefixLength(
+  steps: SequenceStepRun[],
+  sequence: SequenceDefinition,
+): number {
+  let length = 0;
+  for (const [index, step] of steps.entries()) {
+    const definition = sequence.steps[index];
+    if (
+      step.status !== "SUCCESS" ||
+      step.stepId !== definition?.id ||
+      step.stepName !== definition?.name
+    ) {
+      break;
+    }
+    length++;
+  }
+  return length;
+}
+
 export const sequenceRunRepository = {
   initialize(runId: string, sequence: SequenceDefinition): SequenceStepRun[] {
     return sqlite.transaction(() => {
@@ -27,10 +46,10 @@ export const sequenceRunRepository = {
   initializeValidationResume(runId: string, sourceRunId: string, resumeStepId: string): SequenceStepRun[] {
     return sqlite.transaction(() => {
       const source = this.list(sourceRunId);
-      const resumeIndex = source.findIndex((step) => step.stepId === resumeStepId && step.status === "FAILED");
-      if (resumeIndex < 0) throw new Error("The source Sequence Run has no failed validation step to resume.");
+      const resumeIndex = source.findIndex((step) => step.stepId === resumeStepId && ["FAILED", "CANCELLED"].includes(step.status));
+      if (resumeIndex < 0) throw new Error("The source Sequence Run has no failed or paused validation step to resume.");
       if (source.slice(0, resumeIndex).some((step) => step.status !== "SUCCESS")) throw new Error("The source Sequence Run has an incomplete prior step.");
-      if (source.slice(resumeIndex + 1).some((step) => step.status !== "SKIPPED")) throw new Error("The source Sequence Run continued after its failed validation step.");
+      if (source.slice(resumeIndex + 1).some((step) => !["SKIPPED", "CANCELLED"].includes(step.status))) throw new Error("The source Sequence Run continued after its failed or paused validation step.");
       db.delete(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId)).run();
       db.insert(sequenceStepRuns).values(source.map((step, position) => ({
         id: randomUUID(), runId, sequenceId: step.sequenceId, stepId: step.stepId, stepName: step.stepName, position,
@@ -45,11 +64,11 @@ export const sequenceRunRepository = {
   initializeExecutionResume(runId: string, sourceRunId: string, resumeStepId: string): SequenceStepRun[] {
     return sqlite.transaction(() => {
       const source = this.list(sourceRunId);
-      const resumeIndex = source.findIndex((step) => step.stepId === resumeStepId && step.status === "FAILED");
-      if (resumeIndex < 0) throw new Error("The source Sequence Run has no failed executable step to resume.");
+      const resumeIndex = source.findIndex((step) => step.stepId === resumeStepId && ["FAILED", "CANCELLED"].includes(step.status));
+      if (resumeIndex < 0) throw new Error("The source Sequence Run has no failed or paused executable step to resume.");
       if (source.slice(0, resumeIndex).some((step) => step.status !== "SUCCESS") ||
-          source.slice(resumeIndex + 1).some((step) => step.status !== "SKIPPED")) {
-        throw new Error("The source Sequence Run does not have a resumable failed-step boundary.");
+          source.slice(resumeIndex + 1).some((step) => !["SKIPPED", "CANCELLED"].includes(step.status))) {
+        throw new Error("The source Sequence Run does not have a resumable failed or paused-step boundary.");
       }
       db.delete(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId)).run();
       db.insert(sequenceStepRuns).values(source.map((step, position) => ({
@@ -66,14 +85,13 @@ export const sequenceRunRepository = {
   initializeContinuation(runId: string, sourceRunId: string, sequence: SequenceDefinition): SequenceStepRun[] {
     return sqlite.transaction(() => {
       const source = this.list(sourceRunId);
-      if (!source.length || source.length >= sequence.steps.length || source.some((step, index) =>
-        step.status !== "SUCCESS" || step.stepId !== sequence.steps[index]?.id ||
-        step.stepName !== sequence.steps[index]?.name)) {
+      const completedPrefixLength = successfulSequencePrefixLength(source, sequence);
+      if (!completedPrefixLength || completedPrefixLength >= sequence.steps.length) {
         throw new Error("The completed Sequence Run is not a compatible prefix of the current definition.");
       }
       db.delete(sequenceStepRuns).where(eq(sequenceStepRuns.runId, runId)).run();
       db.insert(sequenceStepRuns).values(sequence.steps.map((step, position) => {
-        const completed = source[position];
+        const completed = position < completedPrefixLength ? source[position] : undefined;
         return completed ? {
           id: randomUUID(), runId, sequenceId: sequence.id, stepId: step.id, stepName: step.name, position,
           status: "SUCCESS", startedAt: completed.startedAt, completedAt: completed.completedAt,
