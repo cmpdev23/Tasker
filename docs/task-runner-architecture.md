@@ -207,14 +207,19 @@ mais n’est pas repris comme workspace du nouveau Run. Une Task supprimée ne p
 pas être réexécutée depuis son historique conservé.
 
 Les Sequences disposent en complément d’une reprise volontaire et strictement
-bornée : après un résultat Codex structuré positif suivi d’une validation échouée,
+bornée. Après un résultat Codex structuré positif suivi d’une validation échouée,
 **Reprendre** crée un nouveau Run lié à la source et réutilise son worktree intact.
 Le worker ne relance pas Codex pour l’étape déjà terminée; il rejoue les validations,
-commit l’étape si elles passent, puis continue la Sequence. Cette voie exige une
-terminaison vérifiée, des coordonnées Git exactes, un événement de validation échoué
-et une définition d’étapes identique; elle refuse sinon. Les commandes de validation
-actuelles sont utilisées, ce qui permet notamment de corriger un runtime local sans
-consommer à nouveau les tokens de l’étape achevée.
+commit l’étape si elles passent, puis continue la Sequence. Lorsqu’une étape échoue
+avant les validations (notamment un résultat final Codex non conforme), la même action
+rouvre plutôt ce worktree intact et relance Codex seulement pour l’étape échouée :
+aucun fichier ou diff déjà présent n’est effacé. Son dernier message local, s’il est
+présent, est joint de façon bornée comme compte rendu non fiable afin de préserver
+également une analyse non écrite dans le dépôt. Ces voies exigent une terminaison
+vérifiée, des coordonnées Git exactes et une définition d’étapes identique; la seconde
+exige aussi des étapes précédentes réussies et des suivantes ignorées. Les commandes
+de validation actuelles sont utilisées, ce qui permet notamment de corriger un runtime
+local sans consommer à nouveau les tokens de l’étape achevée.
 
 Le header affiche de façon compacte le modèle, le reasoning, le sandbox et le
 réglage réseau `workspace-write` depuis le snapshot JSON `resolvedConfig` du Run.

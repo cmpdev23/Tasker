@@ -58,3 +58,11 @@
   silencieusement son préfixe réussi. Réutiliser exclusivement une branche de Run
   vérifiée dans un nouveau worktree, conserver l’historique source immuable et
   indiquer dans l’interface quelles étapes seront effectivement exécutées.
+- Un code de sortie Codex nul ne prouve pas que son dernier message respecte le
+  schéma de résultat. Demander une seule correction structurée dans le même thread,
+  sans modification de fichiers, puis échouer en conservant le worktree si elle est
+  encore invalide; une reprise doit rouvrir ce worktree au lieu de recommencer depuis
+  la branche de base.
+- Ne jamais appeler « nouvelles étapes » un suffixe déjà tenté par un Run plus
+  récent. Lorsqu’une reprise locale vérifiable existe, elle a priorité dans
+  l’interface; le checkpoint distant sert uniquement au changement d’environnement.

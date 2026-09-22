@@ -264,6 +264,38 @@ test("semantic failure and invalid final outputs fail despite exit zero", async 
   }
 });
 
+test("an unstructured final answer receives one schema-only repair turn in the same thread", async t => {
+  const { root, worktree, schema } = await fixture(t);
+  const launch = await stub(root, `
+    const rl = require('node:readline').createInterface({input:process.stdin});
+    const send = value => console.log(JSON.stringify(value));
+    let turns = 0;
+    rl.on('line', line => {
+      const message = JSON.parse(line);
+      if (message.id === 1) send({id:1,result:{}});
+      if (message.method === 'thread/start') send({id:2,result:{thread:{id:'thread-1'}}});
+      if (message.method === 'turn/start') {
+        turns += 1;
+        if (turns === 2 && !/previous final answer did not satisfy/i.test(message.params.input[0].text)) process.exit(9);
+        send({id:message.id,result:{turn:{id:'turn-'+turns,status:'inProgress'}}});
+        const text = turns === 1 ? 'Completed research, but omitted the JSON envelope.' :
+          JSON.stringify({status:'SUCCESS',summary:'Recovered structured result',blocking_error:null});
+        send({method:'item/completed',params:{item:{id:'item-'+turns,type:'agentMessage',phase:'final_answer',text}}});
+        send({method:'turn/completed',params:{turn:{id:'turn-'+turns,status:'completed'}}});
+      }
+    });
+    process.stdin.on('end', () => process.exit(0));`);
+  const events: CodexRunEvent[] = [];
+  const result = await runCodex({ worktreePath: worktree, prompt: "test", config, timeoutMs: 10_000,
+    outputSchemaPath: schema, onEvent: event => events.push(event) }, launch);
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.error, null);
+  assert.equal(result.agentResult?.summary, "Recovered structured result");
+  assert.equal(events.filter((event) => event.type === "codex" &&
+    (event.event as { type?: string }).type === "result.repair").length, 1);
+});
+
 test("pre-abort does not spawn and missing executable yields a controlled error", async t => {
   const { root, worktree } = await fixture(t);
   const controller = new AbortController(); controller.abort();

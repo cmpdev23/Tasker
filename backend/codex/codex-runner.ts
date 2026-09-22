@@ -86,6 +86,8 @@ const MAX_TRANSPORT_LINE_BYTES = 32 * 1024 * 1024;
 const MAX_PERSISTED_TEXT_CHARS = 256 * 1024;
 const PERSISTED_TEXT_EDGE_CHARS = 64 * 1024;
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
+const OUTPUT_REPAIR_TURN_ID = 4;
+const OUTPUT_REPAIR_PROMPT = `Your previous final answer did not satisfy the required structured result. Do not change files, run commands, or repeat the work. Reply now with only one JSON object conforming exactly to the output schema already supplied: status (SUCCESS or FAILURE), summary (string), and blocking_error (string or null). Report SUCCESS only if the current step is truly complete; otherwise report FAILURE and state the concrete blocking reason.`;
 
 /**
  * App Server's completed items are authoritative. These high-frequency
@@ -549,6 +551,7 @@ export async function runCodex(
     let threadId: string | null = null;
     let turnId: string | null = null;
     let turnFinished = false;
+    let outputRepairRequested = false;
     const stdoutLines = createInterface({ input: child.stdout });
     const stderrDecoder = new StringDecoder("utf8");
     const emit = (event: CodexRunEvent) => {
@@ -590,6 +593,26 @@ export async function runCodex(
     const send = (message: unknown) => {
       if (!child.stdin.writable || termination) return;
       child.stdin.write(`${JSON.stringify(message)}\n`);
+    };
+    const startTurn = (id: number, input: string) => {
+      if (!threadId) {
+        result.error = "Codex app-server did not return a thread ID before starting a turn.";
+        stop("error");
+        return;
+      }
+      turnId = null;
+      send({ method: "turn/start", id, params: {
+        threadId,
+        input: [{ type: "text", text: input }],
+        cwd: options.worktreePath,
+        approvalPolicy: approvalPolicy(options.config),
+        ...(permissionProfile ? { permissions: permissionProfile.id } : { sandboxPolicy }),
+        runtimeWorkspaceRoots: [options.worktreePath],
+        ...(options.config.model ? { model: options.config.model } : {}),
+        effort: options.config.model_reasoning_effort,
+        summary: options.config.model_reasoning_summary,
+        outputSchema: CODEX_RUN_OUTPUT_SCHEMA,
+      } });
     };
     const mappedEvent = (type: string, item?: unknown, extra?: Record<string, unknown>) => {
       const event = compactPersistedValue({
@@ -660,21 +683,10 @@ export async function runCodex(
           return;
         }
         threadId = thread.id;
-        send({ method: "turn/start", id: 3, params: {
-          threadId,
-          input: [{ type: "text", text: options.prompt }],
-          cwd: options.worktreePath,
-          approvalPolicy: approvalPolicy(options.config),
-          ...(permissionProfile ? { permissions: permissionProfile.id } : { sandboxPolicy }),
-          runtimeWorkspaceRoots: [options.worktreePath],
-          ...(options.config.model ? { model: options.config.model } : {}),
-          effort: options.config.model_reasoning_effort,
-          summary: options.config.model_reasoning_summary,
-          outputSchema: CODEX_RUN_OUTPUT_SCHEMA,
-        } });
+        startTurn(3, options.prompt);
         return;
       }
-      if (message.id === 3) {
+      if (message.id === 3 || message.id === OUTPUT_REPAIR_TURN_ID) {
         const turn = message.result?.turn as { id?: unknown } | undefined;
         if (typeof turn?.id === "string") turnId = turn.id;
         return;
@@ -702,16 +714,27 @@ export async function runCodex(
         mappedEvent(message.method === "item/started" ? "item.started" : "item.completed", item);
       } else if (message.method === "turn/completed") {
         const turn = params.turn as { status?: unknown; error?: { message?: unknown }; usage?: unknown } | undefined;
-        turnFinished = true;
         if (turn?.status === "failed") {
+          turnFinished = true;
           const detail = typeof turn.error?.message === "string" ? turn.error.message : "Codex turn failed.";
           result.error ??= detail;
           mappedEvent("turn.failed", undefined, { error: { message: detail } });
         } else {
           mappedEvent("turn.completed", undefined, { usage: turn?.usage });
-          if (turn?.status === "interrupted" && !result.cancelled && !result.timedOut) result.error ??= "Codex turn was interrupted.";
+          if (turn?.status === "interrupted" && !result.cancelled && !result.timedOut) {
+            turnFinished = true;
+            result.error ??= "Codex turn was interrupted.";
+          } else if (!outputRepairRequested && !result.error && !result.cancelled && !result.timedOut &&
+            !parseAgentResult(result.lastAgentMessage)) {
+            outputRepairRequested = true;
+            mappedEvent("result.repair", undefined, { message: "Codex final answer was not structured; requesting one schema-only repair turn." });
+            startTurn(OUTPUT_REPAIR_TURN_ID, OUTPUT_REPAIR_PROMPT);
+            return;
+          } else {
+            turnFinished = true;
+          }
         }
-        child.stdin.end();
+        if (turnFinished) child.stdin.end();
       } else if (message.method === "error") {
         const error = params.error as { message?: unknown } | undefined;
         const detail = typeof error?.message === "string" ? error.message : "Codex reported an execution error.";

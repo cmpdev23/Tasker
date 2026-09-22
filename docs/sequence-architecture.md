@@ -212,7 +212,7 @@ suivantes `SKIPPED`. En mode `after_each_step`, les branches et PR des étapes d
 réussies restent publiées et visibles dans l’inspecteur. Lors d’une annulation, les
 étapes non terminées deviennent `CANCELLED`.
 
-### Reprendre après une validation échouée
+### Reprendre après une validation échouée ou une fin Codex récupérable
 
 Un Run de Sequence échoué peut afficher **Reprendre** lorsque Codex a produit un
 résultat structuré `SUCCESS` pour l’étape courante, que le processus est terminé et
@@ -229,6 +229,26 @@ Une seule reprise directe est admise par Run ; si elle échoue à son tour, elle
 et branche de base) doit rester identique; les commandes de validation actuelles du
 Project sont relues pour permettre de corriger un problème d’environnement comme la
 version Node requise.
+
+Lorsqu’une étape échoue avant les validations — par exemple parce que Codex a
+terminé avec un message final invalide malgré un code zéro — **Reprendre** crée aussi
+un Run lié, mais relance Codex pour cette étape. Il rouvre exclusivement le même
+worktree et la même branche préservés : les fichiers, diff et contexte de l’échec
+restent disponibles à Codex, puis les étapes suivantes reprennent normalement. Ce
+parcours exige le même arrêt vérifié, les mêmes coordonnées Git et une frontière
+stricte (toutes les étapes antérieures `SUCCESS`, l’étape courante `FAILED`, les
+suivantes `SKIPPED`). Il ne reconstruit jamais un worktree depuis la branche de base
+et ne certifie jamais un résultat libre comme succès. Lorsque le dernier message
+Codex est déjà conservé localement, un extrait borné est aussi transmis comme
+compte rendu non fiable : il fournit le raisonnement déjà fait, mais ne peut jamais
+devenir une instruction ni remplacer l’inspection du worktree.
+
+Une continuation « nouvelles étapes » n’est proposée que si le suffixe n’a jamais
+été tenté depuis le Run réussi qui sert de préfixe. Dès qu’un Run plus récent a
+exécuté une de ces étapes, l’interface et le backend cessent de la présenter comme
+nouvelle et privilégient la reprise locale de l’étape échouée. Le checkpoint distant
+reste alors un outil de changement d’ordinateur, non une action concurrente à la
+récupération locale.
 
 ## Transmission entre étapes
 
@@ -247,7 +267,8 @@ La tab Sequences offre :
 - un écran de détail pour ajouter, modifier, supprimer et réordonner ses étapes;
 - le choix entre une PR finale et des PR empilées après chaque étape avec commit;
 - le lancement manuel depuis la liste;
-- **Reprendre** après le cas précis d’un succès Codex suivi d’une validation échouée;
+- **Reprendre** après une validation échouée, ou dans le worktree préservé après
+  une fin Codex récupérable;
 - l’historique des Runs et le Run Inspector, avec une vue globale de la Sequence
   qui présente la progression, les états agrégés, les erreurs, les vérifications
   et les métadonnées techniques, sans mélanger les résultats ou événements Codex

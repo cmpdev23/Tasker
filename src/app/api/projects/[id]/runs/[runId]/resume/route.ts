@@ -7,6 +7,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     assertLocalRequest(request);
     const { id, runId } = await params;
-    return Response.json({ run: await sequenceRunService.resumeValidation(id, runId) }, { status: 202 });
+    return Response.json({ run: await sequenceRunService.resume(id, runId) }, { status: 202 });
   } catch (error) { return errorResponse(error); }
 }

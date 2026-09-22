@@ -171,6 +171,28 @@ test("adding a Sequence step continues from the completed prefix without rerunni
   assert.equal(git(repo, "rev-list", "--count", `${base}..${completed.runBranch}`), "4");
 });
 
+test("a newer failed Run prevents an older prefix from being presented as new steps", async () => {
+  const { project, sequence } = await sequenceFixture();
+  const older = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  sequenceRunRepository.initialize(older.id, { ...sequence, steps: [sequence.steps[0]] });
+  fixture.runRepository.update(older.id, {
+    status: "SUCCESS", terminationVerified: true, runBranch: `tasker/run-${older.id}-${sequence.id}`,
+    baseCommit: "a".repeat(40), completedAt: new Date().toISOString(),
+  });
+  sequenceRunRepository.update(older.id, sequence.steps[0].id, { status: "SUCCESS", completedAt: new Date().toISOString() });
+
+  const newer = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  sequenceRunRepository.initialize(newer.id, sequence);
+  fixture.runRepository.update(newer.id, { status: "FAILED", terminationVerified: true, completedAt: new Date().toISOString() });
+  sequenceRunRepository.update(newer.id, sequence.steps[0].id, { status: "SUCCESS", completedAt: new Date().toISOString() });
+  sequenceRunRepository.update(newer.id, sequence.steps[1].id, { status: "SUCCESS", completedAt: new Date().toISOString() });
+  sequenceRunRepository.update(newer.id, sequence.steps[2].id, { status: "FAILED", completedAt: new Date().toISOString() });
+
+  const enqueued = await sequenceRunService.enqueue(project.id, sequence.id);
+  assert.equal(enqueued.resumeFromRunId, null);
+  assert.equal(enqueued.resumeStage, null);
+});
+
 test("a failed Sequence step stops every following step", { timeout: 60_000 }, async () => {
   const { project, sequence } = await sequenceFixture(true, "after_each_step");
   let call = 0;
@@ -386,4 +408,52 @@ test("a validation resume reuses the completed Codex step and continues the Sequ
   assert.deepEqual(sequenceRunRepository.list(completed.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
   assert.equal(fixture.runRepository.get(project.id, source.id).status, "FAILED", "source history stays immutable");
   assert.equal(git(repo, "rev-list", "--count", `${base}..${worktree.branch}`), "3");
+});
+
+test("an execution resume keeps the failed step worktree and restarts only that step", { timeout: 60_000 }, async () => {
+  const { project, sequence, repo } = await sequenceFixture();
+  const source = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  let initialCalls = 0;
+  const incompleteCodex: typeof runCodex = async (options) => {
+    initialCalls += 1;
+    assert.equal(initialCalls, 1);
+    fs.writeFileSync(path.join(options.worktreePath, "research.txt"), "preserved partial research");
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: "A report without the required result JSON.", agentResult: null,
+      error: "Codex did not return a valid structured task result.", terminationVerified: true };
+  };
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), incompleteCodex);
+  const failed = fixture.runRepository.get(project.id, source.id);
+  assert.equal(failed.status, "FAILED");
+  assert.ok(failed.worktreePath);
+  assert.equal(fs.readFileSync(path.join(failed.worktreePath!, "research.txt"), "utf8"), "preserved partial research");
+
+  const resumed = await sequenceRunService.resume(project.id, source.id);
+  assert.equal(resumed.resumeStage, "EXECUTING");
+  assert.equal(resumed.resumeStepId, sequence.steps[0].id);
+  assert.deepEqual(sequenceRunRepository.list(resumed.id).map((step) => step.status), ["PENDING", "PENDING", "PENDING"]);
+
+  let resumedCalls = 0;
+  const resumedCodex: typeof runCodex = async (options) => {
+    resumedCalls += 1;
+    if (resumedCalls === 1) {
+      assert.equal(options.worktreePath, failed.worktreePath);
+      assert.match(options.prompt, /A report without the required result JSON/);
+      assert.equal(fs.readFileSync(path.join(options.worktreePath, "research.txt"), "utf8"), "preserved partial research");
+      fs.appendFileSync(path.join(options.worktreePath, "research.txt"), " and completed");
+    } else if (resumedCalls === 2) {
+      assert.match(fs.readFileSync(path.join(options.worktreePath, "research.txt"), "utf8"), /completed/);
+      fs.writeFileSync(path.join(options.worktreePath, "article.txt"), "article based on preserved research");
+    }
+    const result = { status: "SUCCESS" as const, summary: `Resumed step ${resumedCalls}`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(result), agentResult: result, error: null, terminationVerified: true };
+  };
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), resumedCodex);
+
+  const complete = fixture.runRepository.get(project.id, resumed.id);
+  assert.equal(complete.status, "SUCCESS", complete.error ?? undefined);
+  assert.equal(resumedCalls, 3);
+  assert.deepEqual(sequenceRunRepository.list(resumed.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
+  assert.match(git(repo, "show", `${complete.runBranch}:research.txt`), /preserved partial research and completed/);
 });

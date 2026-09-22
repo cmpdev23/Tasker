@@ -157,13 +157,22 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
 
   const continuationSource = useMemo(() => {
     if (!selectedSequence) return null;
-    return sequenceRuns.find((candidate) => {
+    for (const [index, candidate] of sequenceRuns.entries()) {
       const completed = stepRunsByRunId.get(candidate.id) ?? [];
-      return candidate.status === "SUCCESS" && candidate.terminationVerified && candidate.runBranch && candidate.baseCommit && completed.length > 0 &&
+      const compatiblePrefix = candidate.status === "SUCCESS" && candidate.terminationVerified && candidate.runBranch && candidate.baseCommit && completed.length > 0 &&
         completed.length < selectedSequence.steps.length && completed.every((step, index) =>
           step.status === "SUCCESS" && step.stepId === selectedSequence.steps[index]?.id &&
           step.stepName === selectedSequence.steps[index]?.name);
-    }) ?? null;
+      if (!compatiblePrefix) continue;
+      const suffixWasAttemptedLater = sequenceRuns.slice(0, index).some((later) => {
+        const laterSteps = stepRunsByRunId.get(later.id) ?? [];
+        return laterSteps.length === selectedSequence.steps.length && laterSteps.every((step, stepIndex) =>
+          step.stepId === selectedSequence.steps[stepIndex]?.id && step.stepName === selectedSequence.steps[stepIndex]?.name) &&
+          laterSteps.slice(completed.length).some((step) => step.status !== "PENDING");
+      });
+      if (!suffixWasAttemptedLater) return candidate;
+    }
+    return null;
   }, [selectedSequence, sequenceRuns, stepRunsByRunId]);
 
   const continuationStepCount = continuationSource
@@ -190,13 +199,11 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   }, [displayStepRuns]);
 
   const canResumeDisplayRun = useMemo(() => {
-    return Boolean(
-      displayRun &&
-      displayRun.kind === "SEQUENCE" &&
-      displayRun.status === "FAILED" &&
-      displayRun.terminationVerified &&
-      displayStepRuns.some((step) => step.status === "FAILED" && step.exitCode === 0)
-    );
+    if (!displayRun || displayRun.kind !== "SEQUENCE" || displayRun.status !== "FAILED" ||
+        !displayRun.terminationVerified || displayRun.codexPid !== null) return false;
+    const failedIndex = displayStepRuns.findIndex((step) => step.status === "FAILED");
+    return failedIndex >= 0 && displayStepRuns.slice(0, failedIndex).every((step) => step.status === "SUCCESS") &&
+      displayStepRuns.slice(failedIndex + 1).every((step) => step.status === "SKIPPED");
   }, [displayRun, displayStepRuns]);
 
   const selectedHasActiveRun = Boolean(activeSequenceRun);
@@ -256,7 +263,9 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
       setSelectedRunIdForView(data.run.id);
       setSelectedRun(data.run);
       setRefresh((value) => value + 1);
-      toast.success("Reprise ajoutée à la file : Codex ne sera pas relancé pour l’étape déjà terminée.");
+      toast.success(data.run.resumeStage === "VALIDATING"
+        ? "Reprise ajoutée à la file : Codex ne sera pas relancé pour l’étape déjà terminée."
+        : "Reprise ajoutée à la file : Codex continuera dans le worktree préservé, sans perdre les modifications existantes.");
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setResumingRunId(null); }
   }
@@ -399,7 +408,12 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
               <FrameDescription>
                 {selectedSequence.steps.length} étape{selectedSequence.steps.length !== 1 ? "s" : ""} · {selectedSequence.pullRequestStrategy === "after_each_step" ? "une PR empilée par étape avec commit" : selectedSequence.pullRequestStrategy === "independent_after_each_step" ? "une PR indépendante par étape" : "une PR après la Sequence"}
               </FrameDescription>
-              {continuationSource && (
+              {canResumeDisplayRun && displayRun && (
+                <p className="mt-1 text-xs text-success">
+                  Reprise locale recommandée : l’étape échouée reprendra dans son worktree préservé. Le checkpoint distant reste destiné à un autre ordinateur.
+                </p>
+              )}
+              {!canResumeDisplayRun && continuationSource && (
                 <p className="mt-1 text-xs text-success">
                   {retainedStepCount === 1 ? "Une étape déjà réussie sera conservée." : `${retainedStepCount} étapes déjà réussies seront conservées.`} {continuationStepCount === 1
                     ? "Une nouvelle étape sera exécutée."
@@ -414,28 +428,38 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
               {portableCheckpointError && <p className="mt-1 text-xs text-destructive">Checkpoint portable indisponible : {portableCheckpointError}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button
-                variant={selectedHasActiveRun ? "secondary" : "default"}
-                disabled={!!starting || !selectedSequence.steps.length || selectedHasActiveRun}
-                onClick={() => void runSequence(selectedSequence.id)}
-              >
-                {starting === selectedSequence.id ? (
-                  <Loader2Icon className="animate-spin" />
-                ) : selectedHasActiveRun ? (
-                  <Loader2Icon className="animate-spin text-info" />
-                ) : (
-                  <PlayIcon />
-                )}
-                {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
-              </Button>
-              {portableCheckpoint && portableCheckpoint.status !== "SUCCESS" && (
+              {canResumeDisplayRun && displayRun ? (
+                <Button
+                  disabled={resumingRunId === displayRun.id || selectedHasActiveRun}
+                  onClick={() => void resumeSequence(displayRun.id)}
+                >
+                  {resumingRunId === displayRun.id ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
+                  Reprendre l’étape échouée
+                </Button>
+              ) : (
+                <Button
+                  variant={selectedHasActiveRun ? "secondary" : "default"}
+                  disabled={!!starting || !selectedSequence.steps.length || selectedHasActiveRun}
+                  onClick={() => void runSequence(selectedSequence.id)}
+                >
+                  {starting === selectedSequence.id ? (
+                    <Loader2Icon className="animate-spin" />
+                  ) : selectedHasActiveRun ? (
+                    <Loader2Icon className="animate-spin text-info" />
+                  ) : (
+                    <PlayIcon />
+                  )}
+                  {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
+                </Button>
+              )}
+              {!canResumeDisplayRun && portableCheckpoint && portableCheckpoint.status !== "SUCCESS" && (
                 <Button
                   variant="outline"
                   disabled={selectedHasActiveRun || !!starting || resumingPortableCheckpoint}
                   onClick={() => void resumePortableCheckpoint()}
                 >
                   {resumingPortableCheckpoint ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
-                  Reprendre le checkpoint
+                  Reprendre le checkpoint distant
                 </Button>
               )}
               <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setSequenceEditor(selectedSequence)}>
@@ -471,18 +495,6 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                     <span className="text-xs font-medium text-muted-foreground">
                       {completedStepsCount} / {selectedSequence.steps.length} réussie{completedStepsCount > 1 ? "s" : ""}
                     </span>
-                    {canResumeDisplayRun && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 gap-1 text-xs"
-                        disabled={resumingRunId === displayRun.id}
-                        onClick={() => void resumeSequence(displayRun.id)}
-                      >
-                        {resumingRunId === displayRun.id ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon className="size-3" />}
-                        Reprendre
-                      </Button>
-                    )}
                     <Button
                       size="sm"
                       variant="outline"

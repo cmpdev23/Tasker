@@ -67,6 +67,7 @@ est le suivant :
 | `turn.failed` | Échec du tour | `error.message` |
 | `error` | Erreur irrécupérable du flux | `message` |
 | `connection.reconnecting` | Avis de reconnexion Codex non terminal | `message` |
+| `result.repair` | Le résultat final n’est pas conforme; une demande de JSON correctif est envoyée dans le même thread | `message` |
 
 `turn.completed.usage` expose actuellement `input_tokens`,
 `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens` et
@@ -76,6 +77,13 @@ Certaines versions de Codex émettent temporairement `error` avec un message de
 la forme `Reconnecting... n/m`, puis terminent le même turn avec succès.
 AgentTasker le normalise en `connection.reconnecting` et ne le rend pas
 terminal; toute autre notification `error` reste une erreur du Run.
+
+Un `turn.completed` avec code de sortie zéro mais un dernier message non conforme
+au schéma ne devient pas un succès par déduction. AgentTasker conserve ce message
+dans les événements, puis demande une seule fois, dans le même thread et sans
+commande ni modification de fichier, un objet JSON conforme. Cette réparation
+permet à Codex de qualifier honnêtement un travail déjà fait ou un blocage réel;
+un second résultat invalide échoue normalement et conserve le worktree.
 
 ### Types d’items
 

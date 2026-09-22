@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Run, RunEvent, SequenceStepRun } from "@db/schema";
 import type { RunQueueEntry, RunQueueStatus } from "@/types/run-queue";
 import { AlertCircleIcon, ArrowLeftIcon, Loader2Icon, Trash2Icon } from "lucide-react";
@@ -94,8 +94,8 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   const failedStepCanResume = inspectedStep
     ? inspectedStep.status === "FAILED" && inspectedStep.exitCode === 0
     : sequenceSteps.some((step) => step.status === "FAILED" && step.exitCode === 0);
-  const canResumeValidation = run.kind === "SEQUENCE" && run.status === "FAILED" && run.terminationVerified &&
-    Boolean(failedCommand) && failedStepCanResume;
+  const canResumeSequence = run.kind === "SEQUENCE" && run.status === "FAILED" && run.terminationVerified &&
+    run.codexPid === null && failedStepCanResume;
   const canPublishStepDraft = Boolean(inspectedStep && inspectedStep.status === "SUCCESS" && inspectedStep.commitHash &&
     !inspectedStep.pullRequestUrl && !isActiveRun(run.status) && run.terminationVerified && run.codexPid === null);
 
@@ -278,7 +278,7 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
           onCancel={inspectedStep ? undefined : cancel}
           onDelete={!inspectedStep && isRemovableRun(run) ? () => void removeRun() : undefined}
           onRerun={inspectedStep ? undefined : onRerun}
-          onResume={canResumeValidation ? onResume : undefined}
+          onResume={canResumeSequence ? onResume : undefined}
           onSaveLogs={inspectedStep ? undefined : saveLogs}
           scopeDescription={inspectedStep
             ? `Étape ${inspectedStep.position + 1} de la séquence « ${run.taskName} »`
