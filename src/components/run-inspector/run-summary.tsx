@@ -1,5 +1,5 @@
 import type { Run } from "@db/schema";
-import { AlertCircleIcon, CheckCircle2Icon, CircleStopIcon } from "lucide-react";
+import { AlertCircleIcon, CheckCircle2Icon, CircleAlertIcon, CircleStopIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { parseRunResult } from "./event-normalizer";
 import type { ProjectCommandActivity } from "./project-command-events";
@@ -39,6 +39,9 @@ export function RunSummary({ run, failedCommand }: { run: Run; failedCommand?: P
           )}
           {run.error && (!result?.blockingError || run.error !== result.blockingError) && (
             <p className={cn("mt-2 whitespace-pre-wrap break-words text-xs leading-5", failed ? "text-destructive" : "text-muted-foreground")}>{run.error}</p>
+          )}
+          {run.warning && (
+            <p className="mt-2 flex gap-1.5 whitespace-pre-wrap break-words text-xs leading-5 text-warning"><CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />{run.warning}</p>
           )}
           {result?.blockingError && <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-destructive">{result.blockingError}</p>}
         </div>

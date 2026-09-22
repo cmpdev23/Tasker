@@ -7,8 +7,10 @@ import { sequenceService } from "./sequence.service";
 import { sequenceRunRepository } from "./sequence-run.repository";
 import { publishSequenceCheckpointBranch, sequenceCheckpointService, type PortableSequenceCheckpoint, type SequenceCheckpointSourceStep } from "./sequence-checkpoint.service";
 import { RUNNER_CONFIG } from "../runs/runner-config";
+import { gitService } from "../git/git.service";
 
 const ACTIVE = new Set(["QUEUED", "PREPARING", "RUNNING", "VALIDATING"]);
+const SHA = /^[0-9a-f]{40,64}$/i;
 
 export interface SequenceCheckpointSyncResult {
   sequenceId: string;
@@ -54,6 +56,19 @@ function checkpointSteps(sequence: Awaited<ReturnType<typeof sequenceService.get
   });
 }
 
+function completedIndependentSequence(sequence: Awaited<ReturnType<typeof sequenceService.get>>, steps: SequenceCheckpointSourceStep[]): boolean {
+  return sequence.pullRequestStrategy === "independent_after_each_step" && steps.length === sequence.steps.length &&
+    steps.every((step, index) => step.status === "SUCCESS" && step.stepId === sequence.steps[index]?.id);
+}
+
+async function remoteRunBranchHead(repository: string, remote: string, branch: string): Promise<string | null> {
+  const stdout = (await gitService.run(repository, ["ls-remote", "--heads", "--", remote, `refs/heads/${branch}`])).stdout;
+  const head = stdout.trim().split(/\s+/)[0];
+  if (!head) return null;
+  if (!SHA.test(head)) throw new Error("Git returned an invalid independent Sequence Run branch commit.");
+  return head;
+}
+
 export const sequenceCheckpointMigrationService = {
   async sync(repositoryPath: string, options: { sequenceId?: string; dryRun?: boolean } = {}): Promise<SequenceCheckpointSyncResult[]> {
     const repository = fs.realpathSync(path.resolve(repositoryPath));
@@ -76,6 +91,7 @@ export const sequenceCheckpointMigrationService = {
         continue;
       }
       const steps = checkpointSteps(sequence, compatiblePrefix(sequence, candidate.id)!);
+      const independentlyCompleted = completedIndependentSequence(sequence, steps);
       const existing = await sequenceCheckpointService.load(repository, git.remote, sequence.id);
       if (existing && existing.runId !== candidate.id) {
         results.push({ sequenceId: sequence.id, status: "SKIPPED", runId: candidate.id,
@@ -87,9 +103,15 @@ export const sequenceCheckpointMigrationService = {
           message: `Would publish ${steps.filter((step) => step.status === "SUCCESS").length}/${steps.length} certified step(s) from Run ${candidate.id}.` });
         continue;
       }
-      const checkpointCommit = await publishSequenceCheckpointBranch({ repoPath: repository, remote: git.remote, branch: candidate.runBranch! });
+      const checkpointCommit = independentlyCompleted
+        ? await remoteRunBranchHead(repository, git.remote, candidate.runBranch!)
+        : await publishSequenceCheckpointBranch({ repoPath: repository, remote: git.remote, branch: candidate.runBranch! });
+      if (!checkpointCommit) {
+        throw new Error("The verified remote branch for this completed independent Sequence is unavailable; its checkpoint cannot be repaired safely.");
+      }
       await sequenceCheckpointService.save({ repoPath: repository, runtimeRoot: RUNNER_CONFIG.dataDirectory,
-        remote: git.remote, sequence, run: candidate, checkpointCommit, status: checkpointStatus(candidate.status, steps), steps });
+        remote: git.remote, sequence, run: candidate, checkpointCommit,
+        status: independentlyCompleted ? "SUCCESS" : checkpointStatus(candidate.status, steps), steps });
       results.push({ sequenceId: sequence.id, status: "SYNCED", runId: candidate.id,
         message: `Published ${steps.filter((step) => step.status === "SUCCESS").length}/${steps.length} certified step(s).` });
     }

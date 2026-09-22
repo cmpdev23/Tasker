@@ -142,6 +142,14 @@ Git, la branche et le commit vérifiés, ainsi que la liste ordonnée des étape
 leurs statuts certifiés, commits et URLs de PR. Il n’inclut jamais les logs, PID,
 chemins locaux, sorties Codex complètes, erreurs brutes ou secrets. Une mise à
 jour concurrente utilise une lease Git et est réessayée depuis l’état distant.
+En mode `independent_after_each_step`, le worktree revient volontairement à la base
+après chaque PR : l’écriture finale du statut `SUCCESS` réutilise donc le dernier
+commit de checkpoint déjà vérifié, sans jamais tenter de pousser cette branche
+locale réinitialisée à rebours. Si la synchronisation distante échoue malgré tout,
+la Sequence déjà certifiée reste `SUCCESS` et l’historique conserve un avertissement
+avec la commande explicite `agenttasker sequence sync --id <sequence-id>`; les
+étapes, commits et PR ne sont jamais rétrogradés en échec pour cette seule copie
+portable.
 
 Depuis un autre ordinateur, l’interface lit ce checkpoint et propose
 **Reprendre le checkpoint**. L’action est explicite : elle recrée un nouveau

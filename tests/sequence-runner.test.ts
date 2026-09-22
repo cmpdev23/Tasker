@@ -14,6 +14,7 @@ let executeRun: typeof import("../backend/runs/run-worker").executeRun;
 let sequenceService: typeof import("../backend/sequences/sequence.service").sequenceService;
 let sequenceRunRepository: typeof import("../backend/sequences/sequence-run.repository").sequenceRunRepository;
 let sequenceRunService: typeof import("../backend/sequences/sequence-run.service").sequenceRunService;
+let sequenceCheckpointService: typeof import("../backend/sequences/sequence-checkpoint.service").sequenceCheckpointService;
 let projectEnvironmentVariableService: typeof import("../backend/runs/project-environment-variable.service").projectEnvironmentVariableService;
 
 before(async () => {
@@ -22,6 +23,7 @@ before(async () => {
   ({ sequenceService } = await import("../backend/sequences/sequence.service"));
   ({ sequenceRunRepository } = await import("../backend/sequences/sequence-run.repository"));
   ({ sequenceRunService } = await import("../backend/sequences/sequence-run.service"));
+  ({ sequenceCheckpointService } = await import("../backend/sequences/sequence-checkpoint.service"));
   ({ projectEnvironmentVariableService } = await import("../backend/runs/project-environment-variable.service"));
 });
 beforeEach(() => fixture.reset());
@@ -334,6 +336,72 @@ test("independent step PRs continue after one failure and restart from the base"
   assert.deepEqual(publicationBases, ["main", "main"]);
   assert.deepEqual(sequenceRunRepository.list(run.id).map((step) => step.status), ["SUCCESS", "FAILED", "SUCCESS"]);
   assert.equal(git(repo, "rev-parse", run.runBranch!), base, "the durable Run branch returns to the base after independent steps");
+});
+
+test("an independent Sequence finalizes its portable checkpoint without pushing its reset branch backwards", { timeout: 60_000 }, async () => {
+  const { project, sequence: initialSequence } = await sequenceFixture(true);
+  const sequence = await sequenceService.update(project.id, initialSequence.id, {
+    name: initialSequence.name,
+    pullRequestStrategy: "independent_after_each_step",
+    failurePolicy: "continue",
+    maxConsecutiveFailures: 2,
+  });
+  let calls = 0;
+  const codex: typeof runCodex = async (options) => {
+    calls++;
+    fs.writeFileSync(path.join(options.worktreePath, `independent-${calls}.txt`), `step ${calls}`);
+    const agentResult = { status: "SUCCESS" as const, summary: `Independent step ${calls}`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  const publication: PublishRunWorktree = async (worktree, options) => ({
+    pushed: true, pushedAt: "2026-09-22T12:00:00.000Z", pullRequestUrl: null, pullRequestCreated: false,
+    branch: options.branch ?? worktree.branch,
+  });
+  const queued = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), codex, publication);
+
+  const run = fixture.runRepository.get(project.id, queued.id);
+  assert.equal(run.status, "SUCCESS", run.error ?? undefined);
+  assert.equal(run.warning, null);
+  const checkpoint = await sequenceRunService.portableCheckpoint(project.id, sequence.id);
+  assert.equal(checkpoint?.status, "SUCCESS");
+  assert.deepEqual(checkpoint?.steps.map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
+});
+
+test("a checkpoint sync warning does not mark certified independent steps as failed", { timeout: 60_000 }, async (t) => {
+  const { project, sequence: initialSequence } = await sequenceFixture(true);
+  const sequence = await sequenceService.update(project.id, initialSequence.id, {
+    name: initialSequence.name,
+    pullRequestStrategy: "independent_after_each_step",
+    failurePolicy: "continue",
+    maxConsecutiveFailures: 2,
+  });
+  const originalSave = sequenceCheckpointService.save;
+  sequenceCheckpointService.save = async (options) => {
+    if (options.status === "SUCCESS") throw new Error("State branch temporarily unavailable.");
+    return originalSave(options);
+  };
+  t.after(() => { sequenceCheckpointService.save = originalSave; });
+  let calls = 0;
+  const codex: typeof runCodex = async (options) => {
+    calls++;
+    fs.writeFileSync(path.join(options.worktreePath, `warning-${calls}.txt`), `step ${calls}`);
+    const agentResult = { status: "SUCCESS" as const, summary: `Independent step ${calls}`, blocking_error: null };
+    return { pid: null, exitCode: 0, signal: null, cancelled: false, timedOut: false,
+      lastAgentMessage: JSON.stringify(agentResult), error: null, agentResult, terminationVerified: true };
+  };
+  const publication: PublishRunWorktree = async (worktree, options) => ({
+    pushed: true, pushedAt: "2026-09-22T12:00:00.000Z", pullRequestUrl: null, pullRequestCreated: false,
+    branch: options.branch ?? worktree.branch,
+  });
+  const queued = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  await executeRun(fixture.runRepository.claim()!, new AbortController(), codex, publication);
+
+  const run = fixture.runRepository.get(project.id, queued.id);
+  assert.equal(run.status, "SUCCESS", run.error ?? undefined);
+  assert.match(run.warning ?? "", /checkpoint distant/i);
+  assert.deepEqual(sequenceRunRepository.list(run.id).map((step) => step.status), ["SUCCESS", "SUCCESS", "SUCCESS"]);
 });
 
 test("independent steps stop at the configured consecutive-failure limit", { timeout: 60_000 }, async () => {

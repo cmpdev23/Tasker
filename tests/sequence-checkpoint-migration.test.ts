@@ -116,3 +116,46 @@ test("sequence sync migrates a completed historical prefix after steps are added
   assert.equal(checkpoint?.status, "IN_PROGRESS");
   assert.deepEqual(checkpoint?.steps.map((step) => step.status), ["SUCCESS", "PENDING"]);
 });
+
+test("sequence sync repairs a completed independent Run from its verified remote branch", async () => {
+  const project = await fixture.project();
+  const repo = project.repositoryPath!;
+  git(repo, "init", "-b", "main");
+  git(repo, "config", "user.name", "Checkpoint Fixture");
+  git(repo, "config", "user.email", "checkpoint@example.invalid");
+  fs.mkdirSync(path.join(repo, ".tasker", "agents"));
+  fs.writeFileSync(path.join(repo, ".tasker", "agents", "main.toml"), "version = 1\n");
+  fs.writeFileSync(path.join(repo, ".tasker", "instructions.md"), "Fixture instructions.");
+  fs.writeFileSync(path.join(repo, ".tasker", "project.toml"), '[git]\nbase_branch = "main"\nremote = "origin"\npush = true\ncreate_pull_request = true\npull_request_draft = true\n');
+  let sequence = await sequenceService.create(project.id, { name: "Independent repair", pullRequestStrategy: "independent_after_each_step" });
+  sequence = await sequenceService.createStep(project.id, sequence.id, { name: "Only", instructions: "Only step", expectChanges: true });
+  git(repo, "add", ".");
+  git(repo, "commit", "-m", "fixture");
+  const remote = path.join(fixture.root, `remote-independent-${project.id}.git`);
+  git(fixture.root, "init", "--bare", remote);
+  git(repo, "remote", "add", "origin", remote);
+  git(repo, "push", "origin", "main");
+
+  const { prepareRunWorktree, finalizeRunWorktree } = await import("../backend/git/run-git.service");
+  const { RUNNER_CONFIG } = await import("../backend/runs/runner-config");
+  const run = fixture.runRepository.createSequence(project.id, sequence.id, sequence.name);
+  const worktree = await prepareRunWorktree({ repoPath: repo, worktreesRoot: path.join(RUNNER_CONFIG.dataDirectory, "worktrees"),
+    runId: run.id, taskId: sequence.id, remote: "origin", baseBranch: "main" });
+  fs.writeFileSync(path.join(worktree.worktreePath, "only.txt"), "completed independently");
+  const result = await finalizeRunWorktree(worktree, { exitCode: 0, validationsSucceeded: true, expectChanges: true,
+    commit: true, commitMessage: "sequence(independent): only" });
+  assert.ok(result.commitSha);
+  git(worktree.worktreePath, "push", "origin", `refs/heads/${worktree.branch}:refs/heads/${worktree.branch}`);
+  git(worktree.worktreePath, "reset", "--hard", worktree.baseCommit);
+  fixture.runRepository.update(run.id, { status: "FAILED", baseRemote: "origin", baseBranch: "main", baseCommit: worktree.baseCommit,
+    runBranch: worktree.branch, worktreePath: worktree.worktreePath, commitHash: result.commitSha,
+    completedAt: new Date().toISOString(), terminationVerified: true });
+  sequenceRunRepository.initialize(run.id, sequence);
+  sequenceRunRepository.update(run.id, sequence.steps[0].id, { status: "SUCCESS", completedAt: new Date().toISOString(), commitHash: result.commitSha });
+
+  const migrated = await migrationService.sync(repo, { sequenceId: sequence.id });
+  assert.equal(migrated[0]?.status, "SYNCED");
+  const checkpoint = await checkpointService.load(repo, "origin", sequence.id);
+  assert.equal(checkpoint?.status, "SUCCESS");
+  assert.equal(checkpoint?.checkpointCommit, result.commitSha);
+});

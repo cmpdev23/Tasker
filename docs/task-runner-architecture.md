@@ -41,7 +41,10 @@ responsable de chaque transition ; le navigateur observe et contrôle.
 La définition et les instructions ne sont pas recopiées en base. Un Run conserve
 le nom historique, les réglages agent et d’exécution résolus, les coordonnées Git,
 les timestamps, le PID du sous-processus actif, le code de sortie, le résultat final,
-le diff, l’horodatage du push, l’URL de PR et l’erreur. Les instructions et réglages
+le diff, l’horodatage du push, l’URL de PR, l’erreur et un avertissement non bloquant.
+L’avertissement est réservé à une opération auxiliaire qui échoue après que le travail
+a déjà été certifié, par exemple la copie portable d’un checkpoint; il ne transforme
+jamais artificiellement un Run `SUCCESS` en `FAILED`. Les instructions et réglages
 sont lus au démarrage effectif du worker, pas au clic de mise en file. Les éditer
 pendant l’attente affecte donc les Runs encore en file. Les réglages déjà chargés
 restent stables pour le Run courant. L’historique contient naturellement les sorties

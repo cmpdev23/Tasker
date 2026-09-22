@@ -15,8 +15,17 @@ function broadStepSummary(step: SequenceStepRun) {
   return firstParagraph.length > 280 ? `${firstParagraph.slice(0, 280).trim()}…` : firstParagraph;
 }
 
-function statusMessage(run: Run, completed: number, total: number, failed: number) {
-  if (run.status === "SUCCESS") return `Les ${total} étapes ont été réalisées avec succès.`;
+function isLegacyIndependentCheckpointFailure(run: Run, steps: SequenceStepRun[]): boolean {
+  try {
+    const strategy = (JSON.parse(run.resolvedConfig ?? "{}") as { sequence?: { pullRequestStrategy?: unknown } })
+      .sequence?.pullRequestStrategy;
+    return strategy === "independent_after_each_step" && run.status === "FAILED" && steps.length > 0 &&
+      steps.every((step) => step.status === "SUCCESS");
+  } catch { return false; }
+}
+
+function statusMessage(run: Run, completed: number, total: number, failed: number, complete: boolean) {
+  if (complete) return `Les ${total} étapes ont été réalisées avec succès.`;
   if (run.status === "FAILED") return failed
     ? `${completed} étape${completed > 1 ? "s" : ""} réussie${completed > 1 ? "s" : ""} avant l’interruption de la Sequence.`
     : "La Sequence a été interrompue avant qu’une étape ne réussisse.";
@@ -41,15 +50,22 @@ export function SequenceRunOverview({ run, steps, commands, onInspectStep }: {
   const failedCommands = commands.filter((command) => command.status === "failed" || command.status === "timed-out" || command.status === "interrupted");
   const validations = commands.filter((command) => command.phase === "validation");
   const preparations = commands.filter((command) => command.phase === "preparation");
+  const legacyCheckpointFailure = isLegacyIndependentCheckpointFailure(run, steps);
   const issues = [
-    run.error,
+    legacyCheckpointFailure ? null : run.error,
     ...steps.flatMap((step) => step.error ? [`${step.stepName} : ${step.error}`] : []),
     ...failedCommands.flatMap((command) => command.error ? [`${command.command} : ${command.error}`] : [`${command.command} : ${command.status === "timed-out" ? "délai dépassé" : "échec de la commande"}`]),
   ].filter((issue): issue is string => Boolean(issue));
   const uniqueIssues = [...new Set(issues)];
-  const failedRun = run.status === "FAILED";
+  const warnings = [
+    run.warning,
+    legacyCheckpointFailure
+      ? "Toutes les étapes et leurs PR ont réussi. Un ancien bug de synchronisation du checkpoint a toutefois enregistré ce Run comme failed; le travail n’a pas échoué."
+      : null,
+  ].filter((warning): warning is string => Boolean(warning));
+  const failedRun = run.status === "FAILED" && !legacyCheckpointFailure;
   const cancelledRun = run.status === "CANCELLED";
-  const completeRun = run.status === "SUCCESS";
+  const completeRun = run.status === "SUCCESS" || legacyCheckpointFailure;
   const Icon = failedRun ? AlertCircleIcon : cancelledRun ? CircleStopIcon : completeRun ? CheckCircle2Icon : Loader2Icon;
 
   return (
@@ -62,7 +78,7 @@ export function SequenceRunOverview({ run, steps, commands, onInspectStep }: {
           <Icon className={cn("mt-0.5 size-4 shrink-0", failedRun ? "text-destructive" : cancelledRun ? "text-muted-foreground" : completeRun ? "text-success" : "animate-spin text-info")} />
           <div>
             <h2 id="sequence-overview-title" className={cn("text-sm font-medium", failedRun && "text-destructive")}>État de la Sequence</h2>
-            <p className="mt-1.5 text-sm leading-6 text-foreground/90">{statusMessage(run, succeeded, steps.length, failed)}</p>
+            <p className="mt-1.5 text-sm leading-6 text-foreground/90">{statusMessage(run, succeeded, steps.length, failed, completeRun)}</p>
           </div>
         </div>
       </section>
@@ -129,6 +145,7 @@ export function SequenceRunOverview({ run, steps, commands, onInspectStep }: {
             {uniqueIssues.map((issue) => <li key={issue} className="rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive">{issue}</li>)}
           </ul>
         ) : <p className="rounded-md border border-success/25 bg-success/5 px-3 py-2 text-sm text-success">Aucune erreur enregistrée pour cette Sequence.</p>}
+        {warnings.map((warning) => <p key={warning} className="rounded-md border border-warning/25 bg-warning/5 px-3 py-2 text-xs leading-5 text-warning">{warning}</p>)}
       </section>
 
       <section aria-labelledby="sequence-checks-title" className="space-y-3">

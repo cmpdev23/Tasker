@@ -114,6 +114,8 @@ export async function executeSequenceRun(
   let projectEnvironment: ProjectProcessEnvironment = {};
   let redact = (value: string) => value;
   let syncPortableCheckpoint: ((status: PortableSequenceCheckpoint["status"]) => Promise<void>) | null = null;
+  let checkpointWarning: string | null = null;
+  let lastPortableCheckpointCommit: string | null = null;
   const event = (type: string, message: string, raw?: string) => runRepository.event(
     run.id,
     type,
@@ -352,11 +354,24 @@ export async function executeSequenceRun(
     fs.writeFileSync(outputSchemaPath, JSON.stringify(CODEX_RUN_OUTPUT_SCHEMA));
     syncPortableCheckpoint = async (status) => {
       if (!gitSettings.push || !worktree) return;
-      const head = await publishSequenceCheckpointBranch({ repoPath: worktree.worktreePath, remote, branch: worktree.branch, signal: controller.signal });
-      const currentRun = runRepository.get(run.projectId, run.id);
-      await sequenceCheckpointService.save({ repoPath: project.repositoryPath!, runtimeRoot: RUNNER_CONFIG.dataDirectory,
-        remote, sequence, run: currentRun, checkpointCommit: head, status, steps: sequenceRunRepository.list(run.id), signal: controller.signal });
-      event("checkpoint", `Portable checkpoint published after ${sequenceRunRepository.list(run.id).filter((step) => step.status === "SUCCESS").length} successful step(s).`);
+      try {
+        // Independent step worktrees are deliberately reset to their base after
+        // each PR. The last verified checkpoint commit must therefore be reused
+        // for the final status write, not pushed backwards from that reset branch.
+        const head = status === "SUCCESS" && independentSteps && lastPortableCheckpointCommit
+          ? lastPortableCheckpointCommit
+          : await publishSequenceCheckpointBranch({ repoPath: worktree.worktreePath, remote, branch: worktree.branch, signal: controller.signal });
+        const currentRun = runRepository.get(run.projectId, run.id);
+        await sequenceCheckpointService.save({ repoPath: project.repositoryPath!, runtimeRoot: RUNNER_CONFIG.dataDirectory,
+          remote, sequence, run: currentRun, checkpointCommit: head, status, steps: sequenceRunRepository.list(run.id), signal: controller.signal });
+        lastPortableCheckpointCommit = head;
+        checkpointWarning = null;
+        event("checkpoint", `Portable checkpoint published after ${sequenceRunRepository.list(run.id).filter((step) => step.status === "SUCCESS").length} successful step(s).`);
+      } catch (error) {
+        const detail = redact(error instanceof Error ? error.message : String(error));
+        checkpointWarning = `Le checkpoint distant n’a pas pu être synchronisé. Les étapes certifiées et leurs PR restent intactes; relancez « agenttasker sequence sync --id ${sequence.id} » depuis le dépôt pour le republier.`;
+        event("checkpoint", checkpointWarning, detail);
+      }
     };
     if (!gitSettings.push) event("checkpoint", "Portable Sequence checkpoints are unavailable because Git push is disabled in Project Settings.");
     let stepBaseCommit = isValidationResume || isExecutionResume
@@ -569,6 +584,7 @@ export async function executeSequenceRun(
       event("status", "Sequence cancelled after validation; completed commits remain on the run branch.");
       return;
     }
+    if (checkpointWarning) runRepository.update(run.id, { warning: checkpointWarning });
     event("status", `Sequence succeeded (${sequence.steps.length} steps)`);
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error));

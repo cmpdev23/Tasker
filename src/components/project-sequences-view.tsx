@@ -41,6 +41,22 @@ interface PortableCheckpoint {
   steps: Array<{ id: string; status: string }>;
 }
 
+/**
+ * AgentTasker 1.0 briefly retried the final portable-checkpoint push after an
+ * independent step run had reset its local branch to the base. All steps and
+ * PRs were already certified, so that non-fast-forward was a bookkeeping bug,
+ * not a failed Sequence. Keep historical Runs legible without rewriting them.
+ */
+function legacyIndependentCheckpointFailure(sequence: SequenceDefinition, run: Run, steps: SequenceStepRun[]): boolean {
+  return sequence.pullRequestStrategy === "independent_after_each_step" && run.status === "FAILED" &&
+    steps.length === sequence.steps.length && steps.every((step, index) =>
+      step.status === "SUCCESS" && step.stepId === sequence.steps[index]?.id);
+}
+
+function sequencePresentationStatus(sequence: SequenceDefinition, run: Run, steps: SequenceStepRun[]): string {
+  return legacyIndependentCheckpointFailure(sequence, run, steps) ? "SUCCESS" : run.status;
+}
+
 export function ProjectSequencesView(props: { project: Project; onNavigateToSettings?: () => void }) {
   return <SequencesView key={`${props.project.id}:${props.project.repositoryPath}`} {...props} />;
 }
@@ -197,6 +213,12 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const hasFailedStep = useMemo(() => {
     return displayStepRuns.some((sr) => sr.status === "FAILED");
   }, [displayStepRuns]);
+
+  const displayRunStatus = displayRun && selectedSequence
+    ? sequencePresentationStatus(selectedSequence, displayRun, displayStepRuns)
+    : displayRun?.status ?? null;
+  const hasLegacyCheckpointFailure = Boolean(displayRun && selectedSequence &&
+    legacyIndependentCheckpointFailure(selectedSequence, displayRun, displayStepRuns));
 
   const canResumeDisplayRun = useMemo(() => {
     if (!displayRun || displayRun.kind !== "SEQUENCE" || displayRun.status !== "FAILED" ||
@@ -402,7 +424,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
               <div className="flex flex-wrap items-center gap-2.5">
                 <FrameTitle className="text-base">{selectedSequence.name}</FrameTitle>
                 {displayRun && (
-                  <RunStatusBadge status={displayRun.status} />
+                  <RunStatusBadge status={displayRunStatus ?? displayRun.status} />
                 )}
               </div>
               <FrameDescription>
@@ -425,6 +447,12 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                   Checkpoint portable : {portableCheckpoint.steps.filter((step) => step.status === "SUCCESS").length}/{portableCheckpoint.steps.length} étapes certifiées · {formatRunDate(portableCheckpoint.updatedAt)}.
                 </p>
               )}
+              {hasLegacyCheckpointFailure && (
+                <p className="mt-1 text-xs text-warning">
+                  Sequence terminée : les 3 étapes et leurs PR ont réussi. L’ancien statut « Failed » vient uniquement d’une synchronisation finale du checkpoint qui a été rejetée; il n’indique pas un échec du travail.
+                </p>
+              )}
+              {displayRun?.warning && <p className="mt-1 text-xs text-warning">{displayRun.warning}</p>}
               {portableCheckpointError && <p className="mt-1 text-xs text-destructive">Checkpoint portable indisponible : {portableCheckpointError}</p>}
             </div>
             <div className="flex flex-wrap gap-2">
@@ -479,7 +507,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                     <span className="text-xs font-semibold">
                       {activeSequenceRun ? "Progression en cours" : "Dernière exécution"}
                     </span>
-                    <RunStatusBadge status={displayRun.status} />
+                    <RunStatusBadge status={displayRunStatus ?? displayRun.status} />
                     <RunIdCopy
                       id={displayRun.id}
                       displayText={displayRun.id.slice(0, 8)}
@@ -513,7 +541,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                       <div
                         className={cn(
                           "h-full transition-all duration-500",
-                          displayRun.status === "SUCCESS"
+                          displayRunStatus === "SUCCESS"
                             ? "bg-success"
                             : hasFailedStep
                               ? "bg-destructive"
@@ -738,6 +766,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                     const active = Boolean(last && isActiveRun(last.status));
                     const lastStepRuns = last ? (stepRunsByRunId.get(last.id) ?? []) : [];
                     const lastCompletedSteps = lastStepRuns.filter((sr) => sr.status === "SUCCESS").length;
+                    const lastStatus = last ? sequencePresentationStatus(sequence, last, lastStepRuns) : null;
 
                     return (
                       <tr key={sequence.id} className="hover:bg-muted/20">
@@ -767,7 +796,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                               }}
                             >
                               <div className="flex flex-wrap items-center gap-1.5">
-                                <RunStatusBadge status={last.status} />
+                                <RunStatusBadge status={lastStatus ?? last.status} />
                                 {lastStepRuns.length > 0 && (
                                   <span className="text-xs text-muted-foreground">
                                     ({lastCompletedSteps}/{lastStepRuns.length})
@@ -845,6 +874,8 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                 const isCurrentlyDisplayed = selectedSequence && displayRun?.id === run.id;
                 const runStepRuns = stepRunsByRunId.get(run.id) ?? [];
                 const runCompletedSteps = runStepRuns.filter((sr) => sr.status === "SUCCESS").length;
+                const runSequence = sequences.find((sequence) => sequence.id === (run.sequenceId || run.taskId));
+                const runStatus = runSequence ? sequencePresentationStatus(runSequence, run, runStepRuns) : run.status;
 
                 return (
                   <li
@@ -895,7 +926,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                         onClick={() => setSelectedRun(run)}
                         className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded"
                       >
-                        <RunStatusBadge status={run.status} />
+                        <RunStatusBadge status={runStatus} />
                       </button>
                     </div>
                   </li>

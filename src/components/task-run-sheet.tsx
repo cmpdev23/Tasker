@@ -25,6 +25,15 @@ import { sequenceStepEvents } from "@/components/run-inspector/sequence-step-eve
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
 export { RunIdCopy } from "@/components/run-inspector/run-id-copy";
 
+function legacyIndependentCheckpointFailure(run: Run, steps: SequenceStepRun[]): boolean {
+  try {
+    const strategy = (JSON.parse(run.resolvedConfig ?? "{}") as { sequence?: { pullRequestStrategy?: unknown } })
+      .sequence?.pullRequestStrategy;
+    return run.kind === "SEQUENCE" && strategy === "independent_after_each_step" && run.status === "FAILED" &&
+      steps.length > 0 && steps.every((step) => step.status === "SUCCESS");
+  } catch { return false; }
+}
+
 export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
   projectId: string;
   initialRun: Run;
@@ -98,6 +107,17 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
     run.codexPid === null && failedStepCanResume;
   const canPublishStepDraft = Boolean(inspectedStep && inspectedStep.status === "SUCCESS" && inspectedStep.commitHash &&
     !inspectedStep.pullRequestUrl && !isActiveRun(run.status) && run.terminationVerified && run.codexPid === null);
+  const headerRun = useMemo<Run>(() => {
+    if (!inspectedStep && legacyIndependentCheckpointFailure(run, sequenceSteps)) {
+      return {
+        ...inspectedRun,
+        status: "SUCCESS",
+        error: null,
+        warning: run.warning ?? "Toutes les étapes et leurs PR ont réussi. Un ancien bug de synchronisation du checkpoint a enregistré ce Run comme failed; le travail n’a pas échoué.",
+      };
+    }
+    return inspectedRun;
+  }, [inspectedRun, inspectedStep, run, sequenceSteps]);
 
   useEffect(() => {
     if (!isActiveRun(inspectedRun.status)) return;
@@ -266,7 +286,7 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
     <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-4xl data-[side=right]:xl:max-w-5xl">
         <RunHeader
-          run={inspectedRun}
+          run={headerRun}
           now={now}
           changedFiles={changedFiles}
           cancelling={cancelling}

@@ -66,3 +66,8 @@
 - Ne jamais appeler « nouvelles étapes » un suffixe déjà tenté par un Run plus
   récent. Lorsqu’une reprise locale vérifiable existe, elle a priorité dans
   l’interface; le checkpoint distant sert uniquement au changement d’environnement.
+- Lorsqu’une opération auxiliaire survient après la certification complète d’une
+  Sequence (notamment son checkpoint portable), ne pas rétrograder le travail et
+  ses PR en `FAILED`. Préserver un avertissement actionnable, puis vérifier que les
+  branches locales réinitialisées en mode indépendant ne sont jamais repoussées à
+  rebours du dernier checkpoint distant.

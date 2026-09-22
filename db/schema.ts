@@ -71,6 +71,8 @@ export const runs = sqliteTable("runs", {
   terminationVerified: integer("termination_verified", { mode: "boolean" }).notNull().default(true),
   exitCode: integer("exit_code"),
   error: text("error"),
+  /** Non-blocking operational issue recorded after the Run's work succeeded. */
+  warning: text("warning"),
   result: text("result"),
   commitHash: text("commit_hash"),
   pushedAt: text("pushed_at"),

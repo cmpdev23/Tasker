@@ -102,6 +102,7 @@ test("formatRunLog formats comprehensive text log including metadata, config, di
     terminationVerified: true,
     exitCode: 0,
     error: null,
+    warning: "Portable checkpoint is pending synchronization.",
     result: "Successfully created SEO page",
     commitHash: "def222",
     pushedAt: null,
@@ -145,6 +146,8 @@ test("formatRunLog formats comprehensive text log including metadata, config, di
   assert.ok(formatted.includes("Commit Hash:      def222"));
   assert.ok(formatted.includes("RESULT SUMMARY"));
   assert.ok(formatted.includes("Successfully created SEO page"));
+  assert.ok(formatted.includes("WARNING"));
+  assert.ok(formatted.includes("Portable checkpoint is pending synchronization."));
   assert.ok(formatted.includes("RESOLVED CONFIGURATION"));
   assert.ok(formatted.includes('"model": "gpt-5-codex"'));
   assert.ok(formatted.includes("GIT CHANGES / DIFF"));

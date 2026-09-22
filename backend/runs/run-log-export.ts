@@ -110,6 +110,14 @@ export function formatRunLog(run: Run, events: RunEvent[]): string {
     lines.push("");
   }
 
+  if (run.warning) {
+    lines.push("-".repeat(80));
+    lines.push("WARNING");
+    lines.push("-".repeat(80));
+    lines.push(run.warning.trim());
+    lines.push("");
+  }
+
   if (run.resolvedConfig) {
     lines.push("-".repeat(80));
     lines.push("RESOLVED CONFIGURATION");
