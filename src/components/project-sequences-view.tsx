@@ -1,18 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { Project, Run } from "@db/schema";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Project, Run, SequenceStepRun } from "@db/schema";
 import type { RunQueueStatus } from "@/types/run-queue";
 import type { SequenceDefinition, SequenceInput, SequenceStepDefinition, SequenceStepInput } from "@/types/sequences";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
+  ClockIcon,
+  ExternalLinkIcon,
+  EyeIcon,
+  GitBranchIcon,
+  GitCommitIcon,
   ListOrderedIcon,
   Loader2Icon,
   PencilIcon,
   PlayIcon,
   PlusIcon,
+  RotateCcwIcon,
   SettingsIcon,
   Trash2Icon,
   WorkflowIcon,
@@ -22,9 +28,10 @@ import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
-import { RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
+import { RunIdCopy, RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
 import { SequenceEditorDialog, SequenceStepEditorDialog } from "@/components/sequence-editor-dialogs";
 import { errorMessage, formatRunDate, isActiveRun, taskRequest } from "@/components/task-ui-utils";
+import { cn } from "@/lib/utils";
 
 export function ProjectSequencesView(props: { project: Project; onNavigateToSettings?: () => void }) {
   return <SequencesView key={`${props.project.id}:${props.project.repositoryPath}`} {...props} />;
@@ -33,12 +40,14 @@ export function ProjectSequencesView(props: { project: Project; onNavigateToSett
 function SequencesView({ project, onNavigateToSettings }: { project: Project; onNavigateToSettings?: () => void }) {
   const [sequences, setSequences] = useState<SequenceDefinition[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [stepRuns, setStepRuns] = useState<SequenceStepRun[]>([]);
   const [queue, setQueue] = useState<RunQueueStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [definitionError, setDefinitionError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const [selectedSequenceId, setSelectedSequenceId] = useState<string | null>(null);
+  const [selectedRunIdForView, setSelectedRunIdForView] = useState<string | null>(null);
   const [sequenceEditor, setSequenceEditor] = useState<SequenceDefinition | null | undefined>(undefined);
   const [stepEditor, setStepEditor] = useState<SequenceStepDefinition | null | undefined>(undefined);
   const [starting, setStarting] = useState<string | null>(null);
@@ -60,7 +69,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     async function poll() {
       const results = await Promise.allSettled([
         taskRequest<{ sequences: SequenceDefinition[] }>(`${baseUrl}/sequences`, { signal: controller.signal }),
-        taskRequest<{ runs: Run[]; queue: RunQueueStatus }>(`${baseUrl}/sequence-runs`, { signal: controller.signal }),
+        taskRequest<{ runs: Run[]; stepRuns?: SequenceStepRun[]; queue: RunQueueStatus }>(`${baseUrl}/sequence-runs`, { signal: controller.signal }),
       ]);
       if (stopped) return;
       const [sequenceResult, runResult] = results;
@@ -70,19 +79,80 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
       } else {
         setDefinitionError(sequenceResult.status === "rejected" ? errorMessage(sequenceResult.reason) : "Réponse de la liste des Sequences invalide.");
       }
+      let hasActive = false;
       if (runResult.status === "fulfilled" && Array.isArray(runResult.value.runs)) {
         setRuns(runResult.value.runs);
+        if (Array.isArray(runResult.value.stepRuns)) {
+          setStepRuns(runResult.value.stepRuns);
+        }
         if (runResult.value.queue) setQueue(runResult.value.queue);
         setRunError(null);
+        hasActive = runResult.value.runs.some((r) => isActiveRun(r.status));
       } else {
         setRunError(runResult.status === "rejected" ? errorMessage(runResult.reason) : "Réponse de l’historique invalide.");
       }
       setLoading(false);
-      timer = setTimeout(poll, 3000);
+      timer = setTimeout(poll, hasActive ? 1500 : 3000);
     }
     void poll();
     return () => { stopped = true; controller.abort(); clearTimeout(timer); };
   }, [baseUrl, project.repositoryPath, refresh]);
+
+  const stepRunsByRunId = useMemo(() => {
+    const map = new Map<string, SequenceStepRun[]>();
+    for (const item of stepRuns) {
+      const list = map.get(item.runId);
+      if (list) list.push(item);
+      else map.set(item.runId, [item]);
+    }
+    return map;
+  }, [stepRuns]);
+
+  const sequenceRuns = useMemo(() => {
+    if (!selectedSequence) return [];
+    return runs.filter((run) => (run.sequenceId || run.taskId) === selectedSequence.id);
+  }, [runs, selectedSequence]);
+
+  const activeSequenceRun = useMemo(() => {
+    return sequenceRuns.find((run) => isActiveRun(run.status)) ?? null;
+  }, [sequenceRuns]);
+
+  const latestSequenceRun = useMemo(() => {
+    return sequenceRuns[0] ?? null;
+  }, [sequenceRuns]);
+
+  const displayRun = useMemo(() => {
+    if (selectedRunIdForView) {
+      const found = sequenceRuns.find((r) => r.id === selectedRunIdForView);
+      if (found) return found;
+    }
+    return activeSequenceRun || latestSequenceRun || null;
+  }, [selectedRunIdForView, sequenceRuns, activeSequenceRun, latestSequenceRun]);
+
+  const displayStepRuns = useMemo(() => {
+    if (!displayRun) return [];
+    return stepRunsByRunId.get(displayRun.id) ?? [];
+  }, [displayRun, stepRunsByRunId]);
+
+  const completedStepsCount = useMemo(() => {
+    return displayStepRuns.filter((sr) => sr.status === "SUCCESS").length;
+  }, [displayStepRuns]);
+
+  const hasFailedStep = useMemo(() => {
+    return displayStepRuns.some((sr) => sr.status === "FAILED");
+  }, [displayStepRuns]);
+
+  const canResumeDisplayRun = useMemo(() => {
+    return Boolean(
+      displayRun &&
+      displayRun.kind === "SEQUENCE" &&
+      displayRun.status === "FAILED" &&
+      displayRun.terminationVerified &&
+      displayStepRuns.some((step) => step.status === "FAILED" && step.exitCode === 0)
+    );
+  }, [displayRun, displayStepRuns]);
+
+  const selectedHasActiveRun = Boolean(activeSequenceRun);
 
   async function saveSequence(input: SequenceInput, id?: string) {
     const data = await taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences${id ? `/${encodeURIComponent(id)}` : ""}`, {
@@ -120,6 +190,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     try {
       const data = await taskRequest<{ run: Run }>(`${baseUrl}/sequences/${encodeURIComponent(sequenceId)}/runs`, { method: "POST" });
       if (!data?.run?.id) throw new Error("Réponse du lancement invalide.");
+      setSelectedRunIdForView(data.run.id);
       setSelectedRun(data.run);
       setRefresh((value) => value + 1);
       toast.success("Sequence ajoutée à la file.");
@@ -133,6 +204,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     try {
       const data = await taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/resume`, { method: "POST" });
       if (!data?.run?.id) throw new Error("Réponse de reprise invalide.");
+      setSelectedRunIdForView(data.run.id);
       setSelectedRun(data.run);
       setRefresh((value) => value + 1);
       toast.success("Reprise ajoutée à la file : Codex ne sera pas relancé pour l’étape déjà terminée.");
@@ -175,7 +247,10 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     try {
       await taskRequest(`${baseUrl}/sequences/${encodeURIComponent(sequence.id)}`, { method: "DELETE" });
       setSequences((current) => current.filter((candidate) => candidate.id !== sequence.id));
-      if (selectedSequenceId === sequence.id) setSelectedSequenceId(null);
+      if (selectedSequenceId === sequence.id) {
+        setSelectedSequenceId(null);
+        setSelectedRunIdForView(null);
+      }
       setRefresh((value) => value + 1);
       toast.success("Sequence supprimée. Son historique est conservé.");
     } catch (caught) { toast.error(errorMessage(caught)); }
@@ -213,9 +288,6 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     const id = run.sequenceId || run.taskId;
     if (!lastRuns.has(id)) lastRuns.set(id, run);
   }
-  const selectedHasActiveRun = selectedSequence
-    ? runs.some((run) => (run.sequenceId || run.taskId) === selectedSequence.id && isActiveRun(run.status))
-    : false;
 
   if (!project.repositoryPath) {
     return (
@@ -244,17 +316,133 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
         <Frame stacked spacing="sm">
           <FrameHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
-              <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => setSelectedSequenceId(null)}><ArrowLeftIcon />Toutes les Sequences</Button>
-              <FrameTitle className="text-base">{selectedSequence.name}</FrameTitle>
-              <FrameDescription>{selectedSequence.steps.length} étape{selectedSequence.steps.length !== 1 ? "s" : ""} · {selectedSequence.pullRequestStrategy === "after_each_step" ? "une PR empilée par étape avec commit" : "une PR après la Sequence"}</FrameDescription>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="-ml-2 mb-2"
+                onClick={() => {
+                  setSelectedSequenceId(null);
+                  setSelectedRunIdForView(null);
+                }}
+              >
+                <ArrowLeftIcon />Toutes les Sequences
+              </Button>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <FrameTitle className="text-base">{selectedSequence.name}</FrameTitle>
+                {displayRun && (
+                  <RunStatusBadge status={displayRun.status} />
+                )}
+              </div>
+              <FrameDescription>
+                {selectedSequence.steps.length} étape{selectedSequence.steps.length !== 1 ? "s" : ""} · {selectedSequence.pullRequestStrategy === "after_each_step" ? "une PR empilée par étape avec commit" : "une PR après la Sequence"}
+              </FrameDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setSequenceEditor(selectedSequence)}><PencilIcon />Configurer</Button>
-              <Button disabled={selectedHasActiveRun || !!definitionError} onClick={() => setStepEditor(null)}><PlusIcon />Ajouter une étape</Button>
+              <Button
+                variant={selectedHasActiveRun ? "secondary" : "default"}
+                disabled={!!starting || !selectedSequence.steps.length || selectedHasActiveRun}
+                onClick={() => void runSequence(selectedSequence.id)}
+              >
+                {starting === selectedSequence.id ? (
+                  <Loader2Icon className="animate-spin" />
+                ) : selectedHasActiveRun ? (
+                  <Loader2Icon className="animate-spin text-info" />
+                ) : (
+                  <PlayIcon />
+                )}
+                {selectedHasActiveRun ? "En cours" : "Exécuter"}
+              </Button>
+              <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setSequenceEditor(selectedSequence)}>
+                <PencilIcon />Configurer
+              </Button>
+              <Button variant="outline" disabled={selectedHasActiveRun || !!definitionError} onClick={() => setStepEditor(null)}>
+                <PlusIcon />Ajouter une étape
+              </Button>
             </div>
           </FrameHeader>
+
           <FramePanel className="p-0">
-            {selectedHasActiveRun && <p className="border-b bg-info/5 px-4 py-3 text-xs text-muted-foreground">La définition est verrouillée pendant son exécution afin que l’ordre et les instructions restent stables.</p>}
+            {displayRun ? (
+              <div className="border-b bg-muted/15 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold">
+                      {activeSequenceRun ? "Progression en cours" : "Dernière exécution"}
+                    </span>
+                    <RunStatusBadge status={displayRun.status} />
+                    <RunIdCopy
+                      id={displayRun.id}
+                      displayText={displayRun.id.slice(0, 8)}
+                      className="text-xs text-muted-foreground"
+                    />
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatRunDate(displayRun.startedAt || displayRun.queuedAt)}
+                      {displayRun.completedAt ? ` → ${formatRunDate(displayRun.completedAt)}` : ""}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      {completedStepsCount} / {selectedSequence.steps.length} réussie{completedStepsCount > 1 ? "s" : ""}
+                    </span>
+                    {canResumeDisplayRun && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 text-xs"
+                        disabled={resumingRunId === displayRun.id}
+                        onClick={() => void resumeSequence(displayRun.id)}
+                      >
+                        {resumingRunId === displayRun.id ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon className="size-3" />}
+                        Reprendre
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 text-xs"
+                      onClick={() => setSelectedRun(displayRun)}
+                    >
+                      <EyeIcon className="size-3" />
+                      Ouvrir l'inspecteur
+                    </Button>
+                  </div>
+                </div>
+
+                {selectedSequence.steps.length > 0 && (
+                  <div className="mt-3">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60">
+                      <div
+                        className={cn(
+                          "h-full transition-all duration-500",
+                          displayRun.status === "SUCCESS"
+                            ? "bg-success"
+                            : hasFailedStep
+                              ? "bg-destructive"
+                              : isActiveRun(displayRun.status)
+                                ? "bg-info animate-pulse"
+                                : "bg-primary",
+                        )}
+                        style={{
+                          width: `${Math.round((completedStepsCount / selectedSequence.steps.length) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {selectedHasActiveRun && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    La définition est verrouillée pendant son exécution afin que l’ordre et les instructions restent stables.
+                  </p>
+                )}
+              </div>
+            ) : selectedHasActiveRun ? (
+              <p className="border-b bg-info/5 px-4 py-3 text-xs text-muted-foreground">
+                La définition est verrouillée pendant son exécution afin que l’ordre et les instructions restent stables.
+              </p>
+            ) : null}
+
             {!selectedSequence.steps.length ? (
               <div className="flex flex-col items-center gap-3 p-12 text-center">
                 <ListOrderedIcon className="size-8 text-muted-foreground" />
@@ -264,27 +452,162 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
               </div>
             ) : (
               <ol className="divide-y">
-                {selectedSequence.steps.map((step, index) => (
-                  <li key={step.id} className="flex items-start gap-3 p-4 hover:bg-muted/20">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-xs text-muted-foreground">{String(index + 1).padStart(2, "0")}</span>
-                    <button type="button" className="min-w-0 flex-1 text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring"
-                      disabled={selectedHasActiveRun} onClick={() => setStepEditor(step)}>
-                      <span className="block break-words text-sm font-medium">{step.name}</span>
-                      <code className="mt-1 block text-xs text-muted-foreground">{step.id}</code>
-                      <Badge className="mt-2" tone={step.expectChanges ? "secondary" : "outline"}>{step.expectChanges ? "Diff requis" : "Analyse permise"}</Badge>
-                    </button>
-                    <div className="flex shrink-0 gap-1">
-                      <Button size="icon-sm" variant="ghost" disabled={selectedHasActiveRun || !!mutating || index === 0}
-                        onClick={() => void reorderStep(index, -1)} aria-label={`Monter ${step.name}`} title="Monter"><ArrowUpIcon /></Button>
-                      <Button size="icon-sm" variant="ghost" disabled={selectedHasActiveRun || !!mutating || index === selectedSequence.steps.length - 1}
-                        onClick={() => void reorderStep(index, 1)} aria-label={`Descendre ${step.name}`} title="Descendre"><ArrowDownIcon /></Button>
-                      <Button size="icon-sm" variant="ghost" disabled={selectedHasActiveRun || !!mutating}
-                        onClick={() => setStepEditor(step)} aria-label={`Modifier ${step.name}`} title="Modifier"><PencilIcon /></Button>
-                      <Button size="icon-sm" variant="ghost" disabled={selectedHasActiveRun || !!mutating}
-                        onClick={() => void deleteStep(step)} aria-label={`Supprimer ${step.name}`} title="Supprimer"><Trash2Icon /></Button>
-                    </div>
-                  </li>
-                ))}
+                {selectedSequence.steps.map((step, index) => {
+                  const stepRun = displayStepRuns.find((candidate) => candidate.stepId === step.id) ?? null;
+                  const isRunning = stepRun ? isActiveRun(stepRun.status) : false;
+                  const isSuccess = stepRun?.status === "SUCCESS";
+                  const isFailed = stepRun?.status === "FAILED";
+                  const isSkipped = stepRun?.status === "SKIPPED";
+                  const isCancelled = stepRun?.status === "CANCELLED";
+
+                  return (
+                    <li
+                      key={step.id}
+                      className={cn(
+                        "flex items-start gap-3 p-4 transition-colors",
+                        isRunning && "border-l-2 border-l-info bg-info/5",
+                        isFailed && "border-l-2 border-l-destructive bg-destructive/5",
+                        isSuccess && "hover:bg-muted/20",
+                        !stepRun && "hover:bg-muted/20",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex size-8 shrink-0 items-center justify-center rounded-full font-mono text-xs transition-colors",
+                          isRunning && "bg-info/20 font-bold text-info ring-2 ring-info/30 ring-offset-1 animate-pulse",
+                          isSuccess && "bg-success/20 font-semibold text-success",
+                          isFailed && "bg-destructive/20 font-semibold text-destructive",
+                          (isSkipped || isCancelled) && "bg-muted text-muted-foreground/60 line-through",
+                          !stepRun && "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            className="min-w-0 text-left outline-none hover:underline focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:hover:no-underline"
+                            disabled={selectedHasActiveRun}
+                            onClick={() => setStepEditor(step)}
+                          >
+                            <span className="block break-words text-sm font-medium">{step.name}</span>
+                          </button>
+                          <div className="flex items-center gap-2">
+                            {stepRun && <RunStatusBadge status={stepRun.status} />}
+                          </div>
+                        </div>
+
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <code className="text-xs text-muted-foreground">{step.id}</code>
+                          <Badge tone={step.expectChanges ? "secondary" : "outline"}>
+                            {step.expectChanges ? "Diff requis" : "Analyse permise"}
+                          </Badge>
+                        </div>
+
+                        {stepRun && (
+                          <div className="mt-2 space-y-1 text-xs">
+                            {(stepRun.startedAt || stepRun.completedAt) && (
+                              <p className="flex items-center gap-1.5 text-muted-foreground">
+                                <ClockIcon className="size-3 shrink-0" />
+                                <span>
+                                  {formatRunDate(stepRun.startedAt)}
+                                  {stepRun.completedAt ? ` → ${formatRunDate(stepRun.completedAt)}` : ""}
+                                </span>
+                              </p>
+                            )}
+
+                            {stepRun.commitHash && (
+                              <p className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                                <GitCommitIcon className="size-3.5 shrink-0" />
+                                <span className="break-all">Commit {stepRun.commitHash}</span>
+                              </p>
+                            )}
+
+                            {stepRun.publicationBranch && (
+                              <p className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                                <GitBranchIcon className="size-3.5 shrink-0" />
+                                <span className="break-all">Branche {stepRun.publicationBranch}</span>
+                              </p>
+                            )}
+
+                            {stepRun.error && (
+                              <p className="mt-1.5 break-words rounded bg-destructive/10 p-2 text-xs text-destructive">
+                                {stepRun.error}
+                              </p>
+                            )}
+
+                            {stepRun.pullRequestUrl && (
+                              <a
+                                href={stepRun.pullRequestUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline"
+                              >
+                                Ouvrir la PR de l’étape <ExternalLinkIcon className="size-3" />
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        {displayRun && (
+                          <Button
+                            size="icon-sm"
+                            variant="ghost"
+                            onClick={() => setSelectedRun(displayRun)}
+                            aria-label={`Inspecter l’exécution de ${step.name}`}
+                            title="Ouvrir l’inspecteur"
+                          >
+                            <EyeIcon />
+                          </Button>
+                        )}
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          disabled={selectedHasActiveRun || !!mutating || index === 0}
+                          onClick={() => void reorderStep(index, -1)}
+                          aria-label={`Monter ${step.name}`}
+                          title="Monter"
+                        >
+                          <ArrowUpIcon />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          disabled={selectedHasActiveRun || !!mutating || index === selectedSequence.steps.length - 1}
+                          onClick={() => void reorderStep(index, 1)}
+                          aria-label={`Descendre ${step.name}`}
+                          title="Descendre"
+                        >
+                          <ArrowDownIcon />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          disabled={selectedHasActiveRun || !!mutating}
+                          onClick={() => setStepEditor(step)}
+                          aria-label={`Modifier ${step.name}`}
+                          title="Modifier"
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          disabled={selectedHasActiveRun || !!mutating}
+                          onClick={() => void deleteStep(step)}
+                          aria-label={`Supprimer ${step.name}`}
+                          title="Supprimer"
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ol>
             )}
           </FramePanel>
@@ -315,12 +638,87 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                   <tbody className="divide-y">{sequences.map((sequence) => {
                     const last = lastRuns.get(sequence.id);
                     const active = Boolean(last && isActiveRun(last.status));
-                    return <tr key={sequence.id} className="hover:bg-muted/20">
-                      <th scope="row" className="min-w-52 p-4 font-normal"><button className="text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSelectedSequenceId(sequence.id)}><span className="block font-medium">{sequence.name}</span><code className="mt-1 block text-xs text-muted-foreground">{sequence.id}</code></button></th>
-                      <td className="p-4"><span className="font-medium">{sequence.steps.length}</span><span className="ml-1 text-xs text-muted-foreground">étape{sequence.steps.length !== 1 ? "s" : ""}</span></td>
-                      <td className="p-4">{last ? <button className="text-left" onClick={() => setSelectedRun(last)}><RunStatusBadge status={last.status} /><span className="mt-1 block text-xs text-muted-foreground">{formatRunDate(last.startedAt || last.queuedAt)}</span></button> : <span className="text-xs text-muted-foreground">Jamais exécutée</span>}</td>
-                      <td className="p-4"><div className="flex justify-end gap-1"><Button size="sm" variant="outline" disabled={!!starting || !sequence.steps.length || active} onClick={() => void runSequence(sequence.id)}>{starting === sequence.id ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}{active ? "En cours" : "Exécuter"}</Button><Button size="sm" variant="ghost" onClick={() => setSelectedSequenceId(sequence.id)}>Ouvrir</Button><Button size="icon-sm" variant="ghost" disabled={active || !!mutating} onClick={() => void deleteSequence(sequence)} aria-label={`Supprimer ${sequence.name}`} title="Supprimer"><Trash2Icon /></Button></div></td>
-                    </tr>;
+                    const lastStepRuns = last ? (stepRunsByRunId.get(last.id) ?? []) : [];
+                    const lastCompletedSteps = lastStepRuns.filter((sr) => sr.status === "SUCCESS").length;
+
+                    return (
+                      <tr key={sequence.id} className="hover:bg-muted/20">
+                        <th scope="row" className="min-w-52 p-4 font-normal">
+                          <button
+                            className="text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => {
+                              setSelectedSequenceId(sequence.id);
+                              setSelectedRunIdForView(null);
+                            }}
+                          >
+                            <span className="block font-medium">{sequence.name}</span>
+                            <code className="mt-1 block text-xs text-muted-foreground">{sequence.id}</code>
+                          </button>
+                        </th>
+                        <td className="p-4">
+                          <span className="font-medium">{sequence.steps.length}</span>
+                          <span className="ml-1 text-xs text-muted-foreground">étape{sequence.steps.length !== 1 ? "s" : ""}</span>
+                        </td>
+                        <td className="p-4">
+                          {last ? (
+                            <button
+                              className="text-left outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => {
+                                setSelectedSequenceId(sequence.id);
+                                setSelectedRunIdForView(last.id);
+                              }}
+                            >
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <RunStatusBadge status={last.status} />
+                                {lastStepRuns.length > 0 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    ({lastCompletedSteps}/{lastStepRuns.length})
+                                  </span>
+                                )}
+                              </div>
+                              <span className="mt-1 block text-xs text-muted-foreground">
+                                {formatRunDate(last.startedAt || last.queuedAt)}
+                              </span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Jamais exécutée</span>
+                          )}
+                        </td>
+                        <td className="p-4">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!!starting || !sequence.steps.length || active}
+                              onClick={() => void runSequence(sequence.id)}
+                            >
+                              {starting === sequence.id ? <Loader2Icon className="animate-spin" /> : <PlayIcon />}
+                              {active ? "En cours" : "Exécuter"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setSelectedSequenceId(sequence.id);
+                                setSelectedRunIdForView(null);
+                              }}
+                            >
+                              Ouvrir
+                            </Button>
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
+                              disabled={active || !!mutating}
+                              onClick={() => void deleteSequence(sequence)}
+                              aria-label={`Supprimer ${sequence.name}`}
+                              title="Supprimer"
+                            >
+                              <Trash2Icon />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
                   })}</tbody>
                 </table>
               </div>
@@ -330,16 +728,82 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
       )}
 
       <Frame stacked spacing="sm">
-        <FrameHeader><FrameTitle>Historique des Sequences</FrameTitle><FrameDescription>Runs récents · actualisation toutes les 3 secondes</FrameDescription></FrameHeader>
+        <FrameHeader>
+          <FrameTitle>Historique des Sequences</FrameTitle>
+          <FrameDescription>
+            {selectedSequence
+              ? `Runs de « ${selectedSequence.name} » et récents · actualisation toutes les 3 secondes`
+              : "Runs récents · actualisation toutes les 3 secondes"}
+          </FrameDescription>
+        </FrameHeader>
         <FramePanel className="p-0">
           {runError && <p role="alert" className="border-b bg-destructive/5 p-4 text-sm text-destructive">{runError} Nouvelle tentative automatique…</p>}
-          {!runs.length ? <p className="p-6 text-sm text-muted-foreground">{loading ? "Chargement…" : "Aucune Sequence exécutée."}</p> : (
-            <ul className="max-h-[28rem] divide-y overflow-y-auto">{runs.map((run) => <li key={run.id}>
-              <button type="button" onClick={() => setSelectedRun(run)} className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-                <span className="min-w-0"><span className="block break-words text-sm font-medium">{run.taskName || run.sequenceId}</span><span className="mt-1 block text-xs text-muted-foreground">{formatRunDate(run.startedAt || run.queuedAt)} · Run <span className="font-mono">{run.id.slice(0, 8)}</span></span></span>
-                <RunStatusBadge status={run.status} />
-              </button>
-            </li>)}</ul>
+          {!runs.length ? (
+            <p className="p-6 text-sm text-muted-foreground">{loading ? "Chargement…" : "Aucune Sequence exécutée."}</p>
+          ) : (
+            <ul className="max-h-[28rem] divide-y overflow-y-auto">
+              {runs.map((run) => {
+                const isCurrentSequence = selectedSequence && (run.sequenceId || run.taskId) === selectedSequence.id;
+                const isCurrentlyDisplayed = selectedSequence && displayRun?.id === run.id;
+                const runStepRuns = stepRunsByRunId.get(run.id) ?? [];
+                const runCompletedSteps = runStepRuns.filter((sr) => sr.status === "SUCCESS").length;
+
+                return (
+                  <li
+                    key={run.id}
+                    className={cn(
+                      "flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-muted/30",
+                      isCurrentlyDisplayed && "border-l-2 border-l-primary bg-muted/15",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRun(run)}
+                      className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    >
+                      <span className="block break-words text-sm font-medium">
+                        {run.taskName || run.sequenceId}
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>
+                          {formatRunDate(run.startedAt || run.queuedAt)} · Run <span className="font-mono">{run.id.slice(0, 8)}</span>
+                        </span>
+                        {runStepRuns.length > 0 && (
+                          <span className="font-medium text-foreground/80">
+                            · {runCompletedSteps}/{runStepRuns.length} étape{runStepRuns.length > 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      {isCurrentSequence && !isCurrentlyDisplayed && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => setSelectedRunIdForView(run.id)}
+                        >
+                          Afficher sur la page
+                        </Button>
+                      )}
+                      {isCurrentlyDisplayed && (
+                        <Badge tone="neutral" variant="dot-outline" className="text-[10px]">
+                          Affiché
+                        </Badge>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRun(run)}
+                        className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded"
+                      >
+                        <RunStatusBadge status={run.status} />
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </FramePanel>
       </Frame>

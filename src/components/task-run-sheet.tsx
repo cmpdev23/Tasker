@@ -21,6 +21,7 @@ import { ProjectCommands } from "@/components/run-inspector/project-commands";
 import { SequenceProgress } from "@/components/run-inspector/sequence-progress";
 
 export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
+export { RunIdCopy } from "@/components/run-inspector/run-id-copy";
 
 export function TaskRunSheet({ projectId, initialRun, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
   projectId: string;

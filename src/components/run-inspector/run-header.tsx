@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
 import { displayModel, resolvedExecutionConfig } from "./execution-config";
-import { formatRunElapsed, shortId } from "./format";
+import { formatRunElapsed } from "./format";
+import { RunIdCopy } from "./run-id-copy";
 import { RunStatusBadge } from "./run-status-badge";
 
 export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested, deleting, rerunning, resuming, savingLogs, onCancel, onDelete, onRerun, onResume, onSaveLogs }: {
@@ -40,10 +41,10 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
             <SheetTitle className="break-words text-lg tracking-tight sm:text-xl">{run.taskName || run.taskId}</SheetTitle>
             <RunStatusBadge status={run.status} />
           </div>
-          <SheetDescription className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+          <SheetDescription render={<div />} className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
             <span>{elapsed}</span>
             <span aria-hidden>·</span>
-            <span className="font-mono" title={run.id}>Run {shortId(run.id)}</span>
+            <RunIdCopy id={run.id} />
           </SheetDescription>
           <p className="mt-3 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
             {meta.map((value, index) => <span className="whitespace-nowrap" key={value}>{index > 0 && <span className="mr-2" aria-hidden>·</span>}{value}</span>)}

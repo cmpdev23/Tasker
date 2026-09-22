@@ -1,4 +1,5 @@
 import { runRepository } from "@backend/runs/run.repository";
+import { sequenceRunRepository } from "@backend/sequences/sequence-run.repository";
 import { sequenceRunService } from "@backend/sequences/sequence-run.service";
 import { errorResponse, assertLocalRequest } from "@backend/http/api";
 
@@ -17,7 +18,9 @@ export async function GET(request: Request, { params }: Context) {
   try {
     const { id, sequenceId } = await params;
     const before = new URL(request.url).searchParams.get("before") ?? undefined;
-    return Response.json({ runs: runRepository.listSequences(id, sequenceId, before) });
+    const runs = runRepository.listSequences(id, sequenceId, before);
+    const runIds = runs.slice(0, 50).map((r) => r.id);
+    const stepRuns = sequenceRunRepository.listForRuns(runIds);
+    return Response.json({ runs, stepRuns });
   } catch (error) { return errorResponse(error); }
 }
-
