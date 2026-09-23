@@ -398,6 +398,15 @@ POSIX utilise un groupe de processus ; Windows conserve les identités PID/date 
 création des descendants via Toolhelp, tente `taskkill`, puis vérifie leur arrêt.
 L’état terminal est écrit après la fin du processus. Les logs restent disponibles.
 
+Une Sequence active peut aussi être **mise en pause**. La demande est observée à la
+même cadence et utilise exactement la même terminaison de processus que l’annulation,
+mais elle est persistée séparément afin que l’interface puisse proposer une reprise
+locale. Une fois l’arrêt vérifié, le worktree demeure réservé à un Run lié : les
+étapes certifiées restent `SUCCESS`, l’étape interrompue et son suffixe sont
+`CANCELLED`, et la reprise relance seulement la frontière non certifiée. Une pause
+ne suspend pas un processus Codex en mémoire et n’est pas portable vers une autre
+machine; les fichiers partiels restent exclusivement dans le worktree local.
+
 Le délai du Run, de 180 minutes par défaut et configurable entre 1 et 1 440 minutes,
 suit le même arrêt et produit `FAILED`. Les commandes de préparation et de validation
 ont leurs propres délais configurables entre 1 et 120 minutes. L’arrêt normal

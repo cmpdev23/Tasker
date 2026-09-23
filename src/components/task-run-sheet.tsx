@@ -34,7 +34,7 @@ function legacyIndependentCheckpointFailure(run: Run, steps: SequenceStepRun[]):
   } catch { return false; }
 }
 
-export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerunning = false, resuming = false, onClose, onRerun, onResume, onPause }: {
+export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerunning = false, resuming = false, onClose, onRerun, onResume }: {
   projectId: string;
   initialRun: Run;
   initialSequenceStep?: SequenceStepRun | null;
@@ -43,7 +43,6 @@ export function TaskRunSheet({ projectId, initialRun, initialSequenceStep, rerun
   onClose: () => void;
   onRerun?: () => void;
   onResume?: () => void;
-  onPause?: () => void;
 }) {
   const [run, setRun] = useState(initialRun);
   const [events, setEvents] = useState<RunEvent[]>([]);

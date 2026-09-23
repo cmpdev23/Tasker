@@ -223,6 +223,24 @@ suivantes `SKIPPED`. En mode `after_each_step`, les branches et PR des étapes d
 réussies restent publiées et visibles dans l’inspecteur. Lors d’une annulation, les
 étapes non terminées deviennent `CANCELLED`.
 
+### Pause locale
+
+Le bouton **Pause** d’une Sequence active demande le même arrêt contrôlé de Codex
+qu’une annulation, mais enregistre une intention distincte. Après terminaison
+vérifiée, le Run apparaît **En pause** et son worktree, sa branche, ses fichiers
+non commités et les étapes `SUCCESS` restent intacts. **Reprendre** crée alors un
+Run lié qui rouvre exclusivement ce même worktree : si Codex avait déjà fini
+l’étape courante, seules ses validations sont rejouées; sinon Codex repart pour
+cette étape avec les fichiers partiels encore présents, puis poursuit le suffixe.
+
+Cette reprise est strictement locale : elle exige les coordonnées Git du worktree,
+un PID absent et une terminaison vérifiée. Une Sequence en pause bloque **Exécuter**
+dans le même environnement afin qu’un clic ne crée pas par erreur une continuation
+neuve qui ignorerait le travail partiel. Sur un autre environnement, seul le
+checkpoint distant et son préfixe `SUCCESS` certifié peuvent être repris; les
+modifications non certifiées du worktree local ne sont jamais présentées comme
+portables.
+
 ### Reprendre après une validation échouée ou une fin Codex récupérable
 
 Un Run de Sequence échoué peut afficher **Reprendre** lorsque Codex a produit un
@@ -277,6 +295,8 @@ La tab Sequences offre :
 - un écran de détail pour ajouter, modifier, supprimer et réordonner ses étapes;
 - le choix entre une PR finale et des PR empilées après chaque étape avec commit;
 - le lancement manuel depuis la liste;
+- **Pause** pendant une Sequence active, puis **Reprendre** dans le worktree local
+  préservé après la terminaison vérifiée;
 - **Reprendre** après une validation échouée, ou dans le worktree préservé après
   une fin Codex récupérable;
 - l’historique des Runs et le Run Inspector, avec une vue globale de la Sequence
@@ -299,7 +319,8 @@ Les définitions actives sont verrouillées pendant leur Run. Les mutations sont
 limitées aux requêtes locales comme celles des Tasks. Les API vivent sous
 `/api/projects/<projectId>/sequences/`; la lecture de l’historique agrégé utilise
 `/api/projects/<projectId>/sequence-runs`. Les opérations génériques d’annulation,
-de récupération, de logs et de suppression d’un Run restent sous `/runs/`.
+de pause locale, de récupération, de logs et de suppression d’un Run restent sous
+`/runs/`.
 
 ## Limites actuelles
 

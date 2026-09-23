@@ -514,7 +514,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
                     {selectedHasActiveRun ? "En cours" : continuationSource ? `Exécuter ${continuationStepCount} nouvelle${continuationStepCount > 1 ? "s" : ""} étape${continuationStepCount > 1 ? "s" : ""}` : "Exécuter"}
                   </Button>
                 )}
-                {selectedHasActiveRun && activeSequenceRun && (
+                {activeSequenceRun && ["RUNNING", "VALIDATING"].includes(activeSequenceRun.status) && (
                   <Button
                     type="button"
                     variant="outline"
@@ -1013,7 +1013,6 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
         onRerun={sequences.some((sequence) => sequence.id === (selectedRun.sequenceId || selectedRun.taskId))
           ? () => void runSequence(selectedRun.sequenceId || selectedRun.taskId) : undefined}
         onResume={() => void resumeSequence(selectedRun.id)}
-        onPause={() => void pauseSequence(selectedRun.id)}
         onClose={() => { setSelectedRun(null); setSelectedStepRun(null); setRefresh((value) => value + 1); }} />}
     </div>
   );

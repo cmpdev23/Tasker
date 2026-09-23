@@ -111,7 +111,7 @@ export function RunHeader({ run, now, changedFiles, cancelling, cancelRequested,
               Reprendre
             </Button>
           )}
-          {run.kind === "SEQUENCE" && isActiveRun(run.status) && run.status !== "QUEUED" && onPause && (
+          {run.kind === "SEQUENCE" && ["RUNNING", "VALIDATING"].includes(run.status) && onPause && (
             <Button variant="outline" size="sm" disabled={pausing || pauseRequested} onClick={onPause}>
               {pausing || pauseRequested ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}
               {pauseRequested ? "Pause demandée…" : "Pause"}

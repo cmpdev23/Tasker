@@ -68,6 +68,10 @@
   complet. Créer un worktree neuf depuis son dernier commit vérifié, conserver ces
   étapes comme acquises et ne remettre à `PENDING` que la première étape non
   certifiée et les suivantes.
+- Une pause de Sequence est une reprise locale explicite, pas une annulation ni un
+  checkpoint portable : attendre la terminaison vérifiée, conserver le même
+  worktree et empêcher Play de créer une continuation neuve qui abandonnerait les
+  modifications partielles.
 - Lorsqu’une opération auxiliaire survient après la certification complète d’une
   Sequence (notamment son checkpoint portable), ne pas rétrograder le travail et
   ses PR en `FAILED`. Préserver un avertissement actionnable, puis vérifier que les
