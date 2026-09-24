@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { RunEvent } from "../db/schema";
 import type { ProjectCommandReport } from "../src/types/project-command";
-import { projectCommandActivities } from "../src/components/run-inspector/project-command-events";
+import { projectCommandActivities } from "../src/modules/runs/run-inspector/project-command-events";
 
 function event(id: number, type: string, message: string, payload?: unknown): RunEvent {
   return { id, runId: "fixture", timestamp: "2026-09-11T12:46:00Z", type, message,

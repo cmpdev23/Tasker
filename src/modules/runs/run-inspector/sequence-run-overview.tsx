@@ -1,7 +1,7 @@
 import type { Run, SequenceStepRun } from "@db/schema";
 import { AlertCircleIcon, CheckCircle2Icon, ChevronDownIcon, CircleStopIcon, ExternalLinkIcon, Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatRunDate, isActiveRun } from "@/components/task-ui-utils";
+import { formatRunDate, isActiveRun } from "@/modules/runs/run-presentation";
 import { cn } from "@/lib/utils";
 import { ExecutionDetails } from "./execution-details";
 import { parseRunResult } from "./event-normalizer";

@@ -29,8 +29,8 @@ import {
 } from "@/components/ui/sidebar"
 import { NAV_MAIN, type NavChild, type NavItem } from "./data"
 import { ChevronRightIcon, PlusIcon } from "lucide-react"
-import { useProjects } from "@/contexts/projects-context"
-import { CreateProjectDialog } from "@/components/create-project-dialog"
+import { useProjects } from "@/modules/projects/projects-context"
+import { CreateProjectDialog } from "@/modules/projects/create-project-dialog"
 
 function NavSubItem({ child }: { child: NavChild }) {
   const pathname = usePathname()

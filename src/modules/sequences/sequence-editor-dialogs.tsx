@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { errorMessage } from "@/components/task-ui-utils";
+import { errorMessage } from "@/lib/client-request";
 
 export function SequenceEditorDialog({ sequence, onClose, onSave }: {
   sequence: SequenceDefinition | null;

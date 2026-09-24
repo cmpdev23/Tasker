@@ -1,5 +1,5 @@
 import { Badge } from "@/components/reui/badge";
-import { isActiveRun } from "@/components/task-ui-utils";
+import { isActiveRun } from "@/modules/runs/run-presentation";
 
 export function RunStatusBadge({ status }: { status: string }) {
   const tone = status === "SUCCESS"

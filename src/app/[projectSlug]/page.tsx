@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { projectService } from "@backend/projects/project.service";
-import { ProjectViews } from "@/components/project-views";
-import { ProjectInfoTooltip } from "@/components/project-info-tooltip";
+import { ProjectViews } from "@/modules/projects/project-views";
+import { ProjectInfoTooltip } from "@/modules/projects/project-info-tooltip";
 
 interface ProjectPageProps {
   params: Promise<{ projectSlug: string }>;

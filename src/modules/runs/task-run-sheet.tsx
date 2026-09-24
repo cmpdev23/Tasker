@@ -7,23 +7,24 @@ import { AlertCircleIcon, ArrowLeftIcon, Loader2Icon, Trash2Icon } from "lucide-
 import { toast } from "sonner";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { errorMessage, isActiveRun, isRemovableRun, taskRequest } from "@/components/task-ui-utils";
-import { ActivityFeed } from "@/components/run-inspector/activity-feed";
-import { isRelevantRunInspectorEvent, normalizeRunEvents } from "@/components/run-inspector/event-normalizer";
-import { changedFileCount } from "@/components/run-inspector/execution-config";
-import { ExecutionDetails } from "@/components/run-inspector/execution-details";
-import { CodexCompletion, EnvironmentPreparation, ExecutionPipeline, GitFinalization } from "@/components/run-inspector/execution-pipeline";
-import { RawEvents } from "@/components/run-inspector/raw-events";
-import { RunHeader } from "@/components/run-inspector/run-header";
-import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
-import { RunSummary } from "@/components/run-inspector/run-summary";
-import { projectCommandActivities } from "@/components/run-inspector/project-command-events";
-import { ProjectCommands } from "@/components/run-inspector/project-commands";
-import { SequenceRunOverview } from "@/components/run-inspector/sequence-run-overview";
-import { sequenceStepEvents } from "@/components/run-inspector/sequence-step-events";
+import { errorMessage, taskRequest } from "@/lib/client-request";
+import { isActiveRun, isRemovableRun } from "@/modules/runs/run-presentation";
+import { ActivityFeed } from "@/modules/runs/run-inspector/activity-feed";
+import { isRelevantRunInspectorEvent, normalizeRunEvents } from "@/modules/runs/run-inspector/event-normalizer";
+import { changedFileCount } from "@/modules/runs/run-inspector/execution-config";
+import { ExecutionDetails } from "@/modules/runs/run-inspector/execution-details";
+import { CodexCompletion, EnvironmentPreparation, ExecutionPipeline, GitFinalization } from "@/modules/runs/run-inspector/execution-pipeline";
+import { RawEvents } from "@/modules/runs/run-inspector/raw-events";
+import { RunHeader } from "@/modules/runs/run-inspector/run-header";
+import { QueueStatusPanel } from "@/modules/runs/run-inspector/queue-status-panel";
+import { RunSummary } from "@/modules/runs/run-inspector/run-summary";
+import { projectCommandActivities } from "@/modules/runs/run-inspector/project-command-events";
+import { ProjectCommands } from "@/modules/runs/run-inspector/project-commands";
+import { SequenceRunOverview } from "@/modules/runs/run-inspector/sequence-run-overview";
+import { sequenceStepEvents } from "@/modules/runs/run-inspector/sequence-step-events";
 
-export { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
-export { RunIdCopy } from "@/components/run-inspector/run-id-copy";
+export { RunStatusBadge } from "@/modules/runs/run-inspector/run-status-badge";
+export { RunIdCopy } from "@/modules/runs/run-inspector/run-id-copy";
 
 function legacyIndependentCheckpointFailure(run: Run, steps: SequenceStepRun[]): boolean {
   try {

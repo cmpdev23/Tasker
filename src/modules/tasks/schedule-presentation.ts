@@ -1,24 +1,5 @@
-export async function taskRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
-  const data = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(data?.error || `Requête impossible (HTTP ${response.status}).`);
-  }
-  return data as T;
-}
-
-export function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Une erreur est survenue.";
-}
-
-export function formatRunDate(value: string | null | undefined, timezone?: string) {
-  if (!value) return "—";
-  try {
-    return new Intl.DateTimeFormat("fr-CA", {
-      dateStyle: "medium", timeStyle: "short", timeZone: timezone,
-    }).format(new Date(value));
-  } catch { return value; }
-}
+import type { TaskDefinition } from "@/types/tasks";
+import { formatRunDate } from "@/modules/runs/run-presentation";
 
 export function localDateTime(value: string, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -53,21 +34,15 @@ export const WEEKDAYS = [
 
 export const SCHEDULE_LABELS = { manual: "Manuelle", once: "Une seule fois", hourly: "Chaque heure", daily: "Chaque jour", weekly: "Chaque semaine" };
 
-export function isActiveRun(status: string) {
-  return ["QUEUED", "PREPARING", "RUNNING", "VALIDATING", "CLEANING_UP"].includes(status);
-}
-
-export function isRerunnableRun(status: string) {
-  return status === "FAILED";
-}
-
-export function isRemovableRun(run: {
-  status: string;
-  terminationVerified: boolean;
-  codexPid: number | null;
-  worktreePath: string | null;
-  runBranch: string | null;
-}) {
-  if (isActiveRun(run.status)) return run.status === "QUEUED" && run.terminationVerified;
-  return run.terminationVerified || run.codexPid === null;
+export function scheduleLabel(task: TaskDefinition) {
+  const { type, startsAt, time, timezone, days } = task.schedule;
+  if (type === "manual") return "Manuelle";
+  if (type === "once") return `${formatRunDate(startsAt, timezone)} · ${timezone}`;
+  if (type === "hourly") return `Chaque heure · ${timezone}`;
+  const frequency = type === "daily"
+    ? SCHEDULE_LABELS.daily
+    : WEEKDAYS.filter(([day]) => days?.includes(day))
+        .map(([, label]) => label.slice(0, 3))
+        .join(", ");
+  return `${frequency} à ${time} · ${timezone}`;
 }

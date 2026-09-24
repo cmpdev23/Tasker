@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { RunEvent } from "../db/schema";
-import { isRelevantRunInspectorEvent, normalizeRunEvents, parseRunResult } from "../src/components/run-inspector/event-normalizer";
-import { changedFileCount, displayModel, resolvedExecutionConfig } from "../src/components/run-inspector/execution-config";
-import { sequenceStepEvents } from "../src/components/run-inspector/sequence-step-events";
-import { isRemovableRun, isRerunnableRun } from "../src/components/task-ui-utils";
+import { isRelevantRunInspectorEvent, normalizeRunEvents, parseRunResult } from "../src/modules/runs/run-inspector/event-normalizer";
+import { changedFileCount, displayModel, resolvedExecutionConfig } from "../src/modules/runs/run-inspector/execution-config";
+import { sequenceStepEvents } from "../src/modules/runs/run-inspector/sequence-step-events";
+import { isRemovableRun, isRerunnableRun } from "../src/modules/runs/run-presentation";
 
 function event(id: number, type: string, payload: unknown, timestamp = `2026-09-10T12:00:${String(id).padStart(2, "0")}.000Z`): RunEvent {
   const rawPayload = payload == null ? null : JSON.stringify(payload);

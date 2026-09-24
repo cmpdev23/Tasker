@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import { isolatedRunner } from "./helpers/runner";
 import type { runCodex } from "../backend/codex/codex-runner";
-import { projectCommandActivities } from "../src/components/run-inspector/project-command-events";
+import { projectCommandActivities } from "../src/modules/runs/run-inspector/project-command-events";
 
 let fixture: Awaited<ReturnType<typeof isolatedRunner>>;
 let executeRun: typeof import("../backend/runs/run-worker").executeRun;

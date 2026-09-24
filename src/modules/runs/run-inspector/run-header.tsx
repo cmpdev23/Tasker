@@ -2,7 +2,7 @@ import type { Run } from "@db/schema";
 import { ExternalLinkIcon, FileTextIcon, Loader2Icon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { isActiveRun, isRerunnableRun } from "@/components/task-ui-utils";
+import { isActiveRun, isRerunnableRun } from "@/modules/runs/run-presentation";
 import { displayModel, resolvedExecutionConfig } from "./execution-config";
 import { formatRunElapsed } from "./format";
 import { RunIdCopy } from "./run-id-copy";

@@ -33,7 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { useProjects } from "@/contexts/projects-context";
+import { useProjects } from "@/modules/projects/projects-context";
 import {
   DEFAULT_PROJECT_EXECUTION_SETTINGS,
   PACKAGE_MANAGERS,

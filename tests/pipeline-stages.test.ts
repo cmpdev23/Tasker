@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pipelineStages } from "../src/components/run-inspector/pipeline-stages";
+import { pipelineStages } from "../src/modules/runs/run-inspector/pipeline-stages";
 
 const command = (phase: "preparation" | "validation", status: "running" | "success" | "failed") => ({
   id: 1, kind: "project-command" as const, phase, command: "npm run check", status,

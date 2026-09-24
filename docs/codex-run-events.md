@@ -173,7 +173,7 @@ RunEvent SQLite
   → EventRenderer spécialisé
 ```
 
-`src/components/run-inspector/event-normalizer.ts` applique les règles suivantes :
+`src/modules/runs/run-inspector/event-normalizer.ts` applique les règles suivantes :
 
 1. `item.started`, `item.updated` et `item.completed` portant le même `item.id`
    deviennent une seule activité stable dans la timeline.

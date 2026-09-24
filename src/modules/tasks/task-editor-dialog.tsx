@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { errorMessage, localDateTime, scheduleInstant, SCHEDULE_LABELS, WEEKDAYS } from "@/components/task-ui-utils";
+import { errorMessage } from "@/lib/client-request";
+import { localDateTime, scheduleInstant, SCHEDULE_LABELS, WEEKDAYS } from "@/modules/tasks/schedule-presentation";
 
 export function TaskEditorDialog({ task, onClose, onSave }: {
   task: TaskDefinition | null;

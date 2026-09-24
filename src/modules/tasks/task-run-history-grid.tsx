@@ -20,8 +20,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { RunStatusBadge } from "@/components/run-inspector/run-status-badge";
-import { formatRunDate } from "@/components/task-ui-utils";
+import { RunStatusBadge } from "@/modules/runs/run-inspector/run-status-badge";
+import { formatRunDate } from "@/modules/runs/run-presentation";
 
 const runHistoryFeatures = tableFeatures({
   rowSortingFeature,

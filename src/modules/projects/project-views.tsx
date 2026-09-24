@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { type Project } from "@db/schema";
-import { ProjectSettingsForm } from "@/components/project-settings-form";
-import { ProjectInstructionsView } from "@/components/project-instructions-view";
-import { ProjectAgentsView } from "@/components/project-agents-view";
-import { ProjectTasksView } from "@/components/project-tasks-view";
-import { ProjectSequencesView } from "@/components/project-sequences-view";
+import { ProjectSettingsForm } from "@/modules/projects/project-settings-form";
+import { ProjectInstructionsView } from "@/modules/instructions/project-instructions-view";
+import { ProjectAgentsView } from "@/modules/agents/project-agents-view";
+import { ProjectTasksView } from "@/modules/tasks/project-tasks-view";
+import { ProjectSequencesView } from "@/modules/sequences/project-sequences-view";
 
 interface ProjectViewsProps {
   project: Project;

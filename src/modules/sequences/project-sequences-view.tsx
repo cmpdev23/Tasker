@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Project, Run, SequenceStepRun } from "@db/schema";
-import type { RunQueueStatus } from "@/types/run-queue";
 import type { SequenceDefinition, SequenceInput, SequenceStepDefinition, SequenceStepInput } from "@/types/sequences";
 import {
   ArrowDownIcon,
@@ -29,60 +28,21 @@ import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "@/
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
-import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
-import { RunIdCopy, RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
-import { SequenceEditorDialog, SequenceStepEditorDialog } from "@/components/sequence-editor-dialogs";
-import { errorMessage, formatRunDate, isActiveRun, taskRequest } from "@/components/task-ui-utils";
+import { QueueStatusPanel } from "@/modules/runs/run-inspector/queue-status-panel";
+import { RunIdCopy, RunStatusBadge, TaskRunSheet } from "@/modules/runs/task-run-sheet";
+import { SequenceEditorDialog, SequenceStepEditorDialog } from "@/modules/sequences/sequence-editor-dialogs";
+import { errorMessage, taskRequest } from "@/lib/client-request";
+import { formatRunDate, isActiveRun } from "@/modules/runs/run-presentation";
 import { cn } from "@/lib/utils";
-
-interface PortableCheckpoint {
-  sequenceId: string;
-  runId: string;
-  status: "IN_PROGRESS" | "SUCCESS" | "FAILED" | "CANCELLED";
-  updatedAt: string;
-  steps: Array<{ id: string; status: string }>;
-}
-
-/**
- * AgentTasker 1.0 briefly retried the final portable-checkpoint push after an
- * independent step run had reset its local branch to the base. All steps and
- * PRs were already certified, so that non-fast-forward was a bookkeeping bug,
- * not a failed Sequence. Keep historical Runs legible without rewriting them.
- */
-function legacyIndependentCheckpointFailure(sequence: SequenceDefinition, run: Run, steps: SequenceStepRun[]): boolean {
-  return sequence.pullRequestStrategy === "independent_after_each_step" && run.status === "FAILED" &&
-    steps.length === sequence.steps.length && steps.every((step, index) =>
-      step.status === "SUCCESS" && step.stepId === sequence.steps[index]?.id);
-}
-
-function sequencePresentationStatus(sequence: SequenceDefinition, run: Run, steps: SequenceStepRun[]): string {
-  if (legacyIndependentCheckpointFailure(sequence, run, steps)) return "SUCCESS";
-  return run.status === "CANCELLED" && run.pauseRequested ? "PAUSED" : run.status;
-}
-
-function successfulSequencePrefixLength(steps: SequenceStepRun[], sequence: SequenceDefinition): number {
-  let length = 0;
-  for (const [index, step] of steps.entries()) {
-    const definition = sequence.steps[index];
-    if (step.status !== "SUCCESS" || step.stepId !== definition?.id || step.stepName !== definition?.name) break;
-    length++;
-  }
-  return length;
-}
+import { useSequenceOverview } from "@/modules/sequences/use-sequence-overview";
+import { legacyIndependentCheckpointFailure, sequencePresentationStatus, successfulSequencePrefixLength } from "@/modules/sequences/sequence-presentation";
+import { deleteBlockedRun, recoverBlockedRun } from "@/modules/runs/queue-client";
 
 export function ProjectSequencesView(props: { project: Project; onNavigateToSettings?: () => void }) {
   return <SequencesView key={`${props.project.id}:${props.project.repositoryPath}`} {...props} />;
 }
 
 function SequencesView({ project, onNavigateToSettings }: { project: Project; onNavigateToSettings?: () => void }) {
-  const [sequences, setSequences] = useState<SequenceDefinition[]>([]);
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [stepRuns, setStepRuns] = useState<SequenceStepRun[]>([]);
-  const [queue, setQueue] = useState<RunQueueStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [definitionError, setDefinitionError] = useState<string | null>(null);
-  const [runError, setRunError] = useState<string | null>(null);
-  const [refresh, setRefresh] = useState(0);
   const [selectedSequenceId, setSelectedSequenceId] = useState<string | null>(null);
   const [selectedRunIdForView, setSelectedRunIdForView] = useState<string | null>(null);
   const [sequenceEditor, setSequenceEditor] = useState<SequenceDefinition | null | undefined>(undefined);
@@ -96,58 +56,15 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const [recovering, setRecovering] = useState(false);
   const [deletingBlocker, setDeletingBlocker] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
-  const [portableCheckpoint, setPortableCheckpoint] = useState<PortableCheckpoint | null>(null);
-  const [portableCheckpointError, setPortableCheckpointError] = useState<string | null>(null);
   const [resumingPortableCheckpoint, setResumingPortableCheckpoint] = useState(false);
   const startingRef = useRef(false);
   const baseUrl = `/api/projects/${encodeURIComponent(project.id)}`;
+  const {
+    sequences, setSequences, runs, stepRuns, queue, setQueue, loading,
+    definitionError, runError, portableCheckpoint, portableCheckpointError,
+    setRefresh,
+  } = useSequenceOverview(project, baseUrl, selectedSequenceId);
   const selectedSequence = sequences.find((sequence) => sequence.id === selectedSequenceId) ?? null;
-
-  useEffect(() => {
-    if (!selectedSequenceId) return;
-    const controller = new AbortController();
-    void taskRequest<{ checkpoint: PortableCheckpoint | null }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequenceId)}/checkpoint`, { signal: controller.signal })
-      .then((data) => { setPortableCheckpoint(data.checkpoint ?? null); setPortableCheckpointError(null); })
-      .catch((error) => { if (!controller.signal.aborted) setPortableCheckpointError(errorMessage(error)); });
-    return () => controller.abort();
-  }, [baseUrl, selectedSequenceId, refresh]);
-
-  useEffect(() => {
-    if (!project.repositoryPath) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    async function poll() {
-      const results = await Promise.allSettled([
-        taskRequest<{ sequences: SequenceDefinition[] }>(`${baseUrl}/sequences`, { signal: controller.signal }),
-        taskRequest<{ runs: Run[]; stepRuns?: SequenceStepRun[]; queue: RunQueueStatus }>(`${baseUrl}/sequence-runs`, { signal: controller.signal }),
-      ]);
-      if (stopped) return;
-      const [sequenceResult, runResult] = results;
-      if (sequenceResult.status === "fulfilled" && Array.isArray(sequenceResult.value.sequences)) {
-        setSequences(sequenceResult.value.sequences);
-        setDefinitionError(null);
-      } else {
-        setDefinitionError(sequenceResult.status === "rejected" ? errorMessage(sequenceResult.reason) : "Réponse de la liste des Sequences invalide.");
-      }
-      let hasActive = false;
-      if (runResult.status === "fulfilled" && Array.isArray(runResult.value.runs)) {
-        setRuns(runResult.value.runs);
-        if (Array.isArray(runResult.value.stepRuns)) {
-          setStepRuns(runResult.value.stepRuns);
-        }
-        if (runResult.value.queue) setQueue(runResult.value.queue);
-        setRunError(null);
-        hasActive = runResult.value.runs.some((r) => isActiveRun(r.status));
-      } else {
-        setRunError(runResult.status === "rejected" ? errorMessage(runResult.reason) : "Réponse de l’historique invalide.");
-      }
-      setLoading(false);
-      timer = setTimeout(poll, hasActive ? 1500 : 3000);
-    }
-    void poll();
-    return () => { stopped = true; controller.abort(); clearTimeout(timer); };
-  }, [baseUrl, project.repositoryPath, refresh]);
 
   const stepRunsByRunId = useMemo(() => {
     const map = new Map<string, SequenceStepRun[]>();
@@ -385,7 +302,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     setRecovering(true);
     setQueueError(null);
     try {
-      const data = await taskRequest<{ queue: RunQueueStatus }>(`/api/projects/${encodeURIComponent(blocker.projectId)}/runs/${encodeURIComponent(blocker.id)}/recover`, { method: "POST" });
+      const data = await recoverBlockedRun(blocker);
       if (data.queue) setQueue(data.queue);
       setRefresh((value) => value + 1);
     } catch (caught) { setQueueError(errorMessage(caught)); }
@@ -398,7 +315,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     setDeletingBlocker(true);
     setQueueError(null);
     try {
-      const data = await taskRequest<{ queue: RunQueueStatus }>(`/api/projects/${encodeURIComponent(blocker.projectId)}/runs/${encodeURIComponent(blocker.id)}?deleteArtifacts=true&confirmTermination=true`, { method: "DELETE" });
+      const data = await deleteBlockedRun(blocker);
       if (data.queue) setQueue(data.queue);
       setRefresh((value) => value + 1);
     } catch (caught) { setQueueError(errorMessage(caught)); }

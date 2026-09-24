@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { Project, Run } from "@db/schema";
 import type { TaskDefinition, TaskInput } from "@/types/tasks";
 import type { RunQueueStatus } from "@/types/run-queue";
@@ -35,101 +35,16 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { TaskEditorDialog } from "@/components/task-editor-dialog";
-import { RunStatusBadge, TaskRunSheet } from "@/components/task-run-sheet";
-import { TaskRunHistoryGrid } from "@/components/task-run-history-grid";
-import { QueueStatusPanel } from "@/components/run-inspector/queue-status-panel";
-import {
-  errorMessage,
-  formatRunDate,
-  isRemovableRun,
-  isRerunnableRun,
-  SCHEDULE_LABELS,
-  taskRequest,
-  WEEKDAYS,
-} from "@/components/task-ui-utils";
-
-function scheduleLabel(task: TaskDefinition) {
-  const { type, startsAt, time, timezone, days } = task.schedule;
-  if (type === "manual") return "Manuelle";
-  if (type === "once")
-    return `${formatRunDate(startsAt, timezone)} · ${timezone}`;
-  if (type === "hourly") return `Chaque heure · ${timezone}`;
-  const frequency =
-    type === "daily"
-      ? SCHEDULE_LABELS.daily
-      : WEEKDAYS.filter(([day]) => days?.includes(day))
-          .map(([, label]) => label.slice(0, 3))
-          .join(", ");
-  return `${frequency} à ${time} · ${timezone}`;
-}
-
-function taskState(task: TaskDefinition, last: Run | undefined) {
-  switch (last?.status) {
-    case "QUEUED":
-      return {
-        label: "Waiting",
-        dotClass: "bg-warning",
-        title: "Run en attente dans la file.",
-      };
-    case "PREPARING":
-      return {
-        label: "Preparing",
-        dotClass: "bg-info",
-        title: "Préparation du worktree et des dépendances.",
-      };
-    case "RUNNING":
-      return {
-        label: "Running",
-        dotClass: "bg-info",
-        title: "Codex exécute la tâche.",
-      };
-    case "VALIDATING":
-      return {
-        label: "Validating",
-        dotClass: "bg-info",
-        title: "Les validations du projet sont en cours.",
-      };
-    case "CLEANING_UP":
-      return {
-        label: "Cleaning",
-        dotClass: "bg-info",
-        title: "Finalisation de l’exécution en cours.",
-      };
-  }
-  if (!task.enabled)
-    return {
-      label: "Disabled",
-      dotClass: "bg-muted-foreground",
-      title: "La tâche est désactivée.",
-    };
-  switch (last?.status) {
-    case "SUCCESS":
-      return {
-        label: "Ready",
-        dotClass: "bg-success",
-        title: "La dernière exécution a réussi.",
-      };
-    case "FAILED":
-      return {
-        label: "Failed",
-        dotClass: "bg-destructive",
-        title: "La dernière exécution a échoué.",
-      };
-    case "CANCELLED":
-      return {
-        label: "Cancelled",
-        dotClass: "bg-muted-foreground",
-        title: "La dernière exécution a été annulée.",
-      };
-    default:
-      return {
-        label: "Pending",
-        dotClass: "bg-warning",
-        title: "La tâche n’a pas encore été exécutée.",
-      };
-  }
-}
+import { TaskEditorDialog } from "@/modules/tasks/task-editor-dialog";
+import { RunStatusBadge, TaskRunSheet } from "@/modules/runs/task-run-sheet";
+import { TaskRunHistoryGrid } from "@/modules/tasks/task-run-history-grid";
+import { QueueStatusPanel } from "@/modules/runs/run-inspector/queue-status-panel";
+import { errorMessage, taskRequest } from "@/lib/client-request";
+import { formatRunDate, isRemovableRun, isRerunnableRun } from "@/modules/runs/run-presentation";
+import { scheduleLabel } from "@/modules/tasks/schedule-presentation";
+import { useTaskOverview } from "@/modules/tasks/use-task-overview";
+import { taskState } from "@/modules/tasks/task-presentation";
+import { deleteBlockedRun, recoverBlockedRun } from "@/modules/runs/queue-client";
 
 export function ProjectTasksView(props: {
   project: Project;
@@ -151,16 +66,10 @@ function TasksView({
   project: Project;
   onNavigateToSettings?: () => void;
 }) {
-  const [tasks, setTasks] = useState<TaskDefinition[]>([]);
-  const [runs, setRuns] = useState<Run[]>([]);
   const [olderRuns, setOlderRuns] = useState<Run[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
   const [historyEnd, setHistoryEnd] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [taskError, setTaskError] = useState<string | null>(null);
-  const [runError, setRunError] = useState<string | null>(null);
-  const [queueStatus, setQueueStatus] = useState<RunQueueStatus | null>(null);
   const [recoveringPipeline, setRecoveringPipeline] = useState(false);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [editor, setEditor] = useState<TaskDefinition | null | undefined>(
@@ -173,91 +82,11 @@ function TasksView({
   const [removingRun, setRemovingRun] = useState<string | null>(null);
   const startingRef = useRef(false);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
-  const [resolvedBaseBranch, setResolvedBaseBranch] = useState({
-    source: project.defaultBranch,
-    value: project.defaultBranch || "main",
-  });
-  const [refresh, setRefresh] = useState(0);
   const baseUrl = `/api/projects/${encodeURIComponent(project.id)}`;
-  const baseBranch =
-    resolvedBaseBranch.source === project.defaultBranch
-      ? resolvedBaseBranch.value
-      : project.defaultBranch || "main";
-
-  // Settings may resolve the branch from .tasker/project.toml, which takes
-  // precedence over the value cached on the Project record.
-  useEffect(() => {
-    if (!project.repositoryPath) return;
-    const controller = new AbortController();
-    const branchSource = project.defaultBranch;
-    void taskRequest<{ effectiveDefaultBranch?: string }>(baseUrl + "/git", {
-      signal: controller.signal,
-    })
-      .then((data) => {
-        if (data.effectiveDefaultBranch) {
-          setResolvedBaseBranch({
-            source: branchSource,
-            value: data.effectiveDefaultBranch,
-          });
-        }
-      })
-      .catch(() => {
-        // The task list remains usable when Git inspection is unavailable.
-      });
-    return () => controller.abort();
-  }, [baseUrl, project.defaultBranch, project.repositoryPath]);
-
-  useEffect(() => {
-    if (!project.repositoryPath) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    async function poll() {
-      const results = await Promise.allSettled([
-        taskRequest<{ tasks: TaskDefinition[] }>(baseUrl + "/tasks", {
-          signal: controller.signal,
-        }),
-        taskRequest<{ runs: Run[]; queue: RunQueueStatus }>(baseUrl + "/runs", {
-          signal: controller.signal,
-        }),
-      ]);
-      if (stopped) return;
-      const [taskResult, runResult] = results;
-      if (
-        taskResult.status === "fulfilled" &&
-        Array.isArray(taskResult.value?.tasks)
-      ) {
-        setTasks(taskResult.value.tasks);
-        setTaskError(null);
-      } else
-        setTaskError(
-          taskResult.status === "rejected"
-            ? errorMessage(taskResult.reason)
-            : "Réponse de la liste des tâches invalide.",
-        );
-      if (
-        runResult.status === "fulfilled" &&
-        Array.isArray(runResult.value?.runs)
-      ) {
-        setRuns(runResult.value.runs);
-        if (runResult.value.queue) setQueueStatus(runResult.value.queue);
-        setRunError(null);
-      } else
-        setRunError(
-          runResult.status === "rejected"
-            ? errorMessage(runResult.reason)
-            : "Réponse de l’historique invalide.",
-        );
-      setLoading(false);
-      timer = setTimeout(poll, 3000);
-    }
-    void poll();
-    return () => {
-      stopped = true;
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [baseUrl, project.repositoryPath, refresh]);
+  const {
+    tasks, setTasks, runs, setRuns, loading, taskError, runError,
+    queueStatus, setQueueStatus, baseBranch, setRefresh,
+  } = useTaskOverview(project, baseUrl);
 
   async function saveTask(payload: TaskInput, id?: string) {
     const data = await taskRequest<{ task: TaskDefinition }>(
@@ -342,10 +171,7 @@ function TasksView({
     setRecoveringPipeline(true);
     setPipelineError(null);
     try {
-      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(
-        `/api/projects/${encodeURIComponent(blocker.projectId)}/runs/${encodeURIComponent(blocker.id)}/recover`,
-        { method: "POST" },
-      );
+      const data = await recoverBlockedRun(blocker);
       if (data.queue) setQueueStatus(data.queue);
       setRefresh((value) => value + 1);
       toast.success(
@@ -411,11 +237,7 @@ function TasksView({
     setRemovingRun(blocker.id);
     setPipelineError(null);
     try {
-      const deleteUrl = `/api/projects/${encodeURIComponent(blocker.projectId)}/runs/${encodeURIComponent(blocker.id)}?deleteArtifacts=true&confirmTermination=true`;
-      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(
-        deleteUrl,
-        { method: "DELETE" },
-      );
+      const data = await deleteBlockedRun(blocker);
       setRuns((current) => current.filter((item) => item.id !== blocker.id));
       setOlderRuns((current) =>
         current.filter((item) => item.id !== blocker.id),
