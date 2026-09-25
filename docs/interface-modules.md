@@ -30,4 +30,11 @@ Un module conserve ses composants, hooks et fonctions près de leur domaine. Un 
 
 Les vues Tasks et Sequences gardent les confirmations, mutations et retours utilisateur liés à leur interface. Leurs hooks locaux portent le chargement, les erreurs et le polling. Leurs fonctions locales de présentation portent les horaires, états et préfixes d’étapes certifiés. Les opérations communes de récupération et suppression d’un Run bloquant passent par `src/modules/runs/queue-client.ts`.
 
+Le cycle technique du polling et son invalidation pendant les mutations passent
+par `src/hooks/use-polling.ts` et `src/lib/polling.ts`. Les deux hooks de domaine
+conservent les contrats des réponses et les cadences. `runs/use-queue-actions.ts`
+partage l’état des actions de récupération, tout en laissant les confirmations
+dans chaque écran. `projects/settings/` possède les sections et hooks locaux des
+Settings. Voir [le flux des données, la matrice des mutations et les mesures](interface-data-flow.md).
+
 `src/components/theme-provider.tsx` et `src/components/dev/` sont transversaux ou destinés au développement. Les anciens exemples sans entrée depuis les routes sont recensés dans `branch_doc/dead_code.md` pour audit avant suppression.

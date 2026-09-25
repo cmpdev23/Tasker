@@ -1,5 +1,6 @@
 # Leçons opérationnelles
 
+- Pour une tâche de refactorisation demandée comme document de travail, ne pas se limiter à des pistes générales : relier chaque constat à des fichiers réels, décrire le changement attendu, les différences métier à préserver, l’ordre des lots et les critères vérifiables de fin. Séparer les problèmes constatés des coûts de performance qui restent à mesurer.
 - Sous Windows, le nettoyage des fixtures ayant lancé des arbres de processus doit
   utiliser `fs.rm` avec `maxRetries` et `retryDelay`; la libération d’un handle peut
   être légèrement différée même après une terminaison vérifiée. Toujours confirmer

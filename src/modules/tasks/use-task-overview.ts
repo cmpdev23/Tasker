@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project, Run } from "@db/schema";
 import type { TaskDefinition } from "@/types/tasks";
 import type { RunQueueStatus } from "@/types/run-queue";
 import { errorMessage, taskRequest } from "@/lib/client-request";
+import { usePolling } from "@/hooks/use-polling";
+import { requireTask } from "./task-response";
+import { requireQueue } from "@/modules/runs/run-response";
 
 export function useTaskOverview(project: Project, baseUrl: string) {
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
@@ -15,7 +18,7 @@ export function useTaskOverview(project: Project, baseUrl: string) {
     source: project.defaultBranch,
     value: project.defaultBranch || "main",
   });
-  const [refresh, setRefresh] = useState(0);
+  const nextLoad = useRef<"all" | "runs">("all");
   const baseBranch = resolvedBaseBranch.source === project.defaultBranch
     ? resolvedBaseBranch.value
     : project.defaultBranch || "main";
@@ -29,7 +32,7 @@ export function useTaskOverview(project: Project, baseUrl: string) {
       signal: controller.signal,
     })
       .then((data) => {
-        if (data.effectiveDefaultBranch) {
+        if (!controller.signal.aborted && data?.effectiveDefaultBranch) {
           setResolvedBaseBranch({ source: branchSource, value: data.effectiveDefaultBranch });
         }
       })
@@ -39,48 +42,42 @@ export function useTaskOverview(project: Project, baseUrl: string) {
     return () => controller.abort();
   }, [baseUrl, project.defaultBranch, project.repositoryPath]);
 
-  useEffect(() => {
-    if (!project.repositoryPath) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    async function poll() {
-      const results = await Promise.allSettled([
-        taskRequest<{ tasks: TaskDefinition[] }>(baseUrl + "/tasks", { signal: controller.signal }),
-        taskRequest<{ runs: Run[]; queue: RunQueueStatus }>(baseUrl + "/runs", { signal: controller.signal }),
-      ]);
-      if (stopped) return;
-      const [taskResult, runResult] = results;
-      if (taskResult.status === "fulfilled" && Array.isArray(taskResult.value?.tasks)) {
-        setTasks(taskResult.value.tasks);
-        setTaskError(null);
-      } else {
-        setTaskError(taskResult.status === "rejected"
-          ? errorMessage(taskResult.reason)
-          : "Réponse de la liste des tâches invalide.");
-      }
-      if (runResult.status === "fulfilled" && Array.isArray(runResult.value?.runs)) {
-        setRuns(runResult.value.runs);
-        if (runResult.value.queue) setQueueStatus(runResult.value.queue);
-        setRunError(null);
-      } else {
-        setRunError(runResult.status === "rejected"
-          ? errorMessage(runResult.reason)
-          : "Réponse de l’historique invalide.");
-      }
-      setLoading(false);
-      timer = setTimeout(poll, 3000);
+  const poll = useCallback(async (signal: AbortSignal) => {
+    const scope = nextLoad.current;
+    nextLoad.current = "all";
+    const results = await Promise.allSettled([
+      scope === "all" ? taskRequest<{ tasks: TaskDefinition[] }>(baseUrl + "/tasks", { signal }) : Promise.resolve(null),
+      taskRequest<{ runs: Run[]; queue: RunQueueStatus }>(baseUrl + "/runs", { signal }),
+    ]);
+    if (signal.aborted) return 3000;
+    const [taskResult, runResult] = results;
+    if (scope === "all") try {
+      if (taskResult.status === "rejected") throw taskResult.reason;
+      if (!Array.isArray(taskResult.value?.tasks)) throw new Error("Réponse de la liste des tâches invalide.");
+      setTasks(taskResult.value.tasks.map(requireTask));
+      setTaskError(null);
+    } catch (error) {
+      setTaskError(errorMessage(error));
     }
-    void poll();
-    return () => {
-      stopped = true;
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [baseUrl, project.repositoryPath, refresh]);
+    try {
+      if (runResult.status === "rejected") throw runResult.reason;
+      if (!Array.isArray(runResult.value?.runs)) throw new Error("Réponse de l’historique invalide.");
+      const queue = requireQueue(runResult.value.queue);
+      setRuns(runResult.value.runs);
+      setQueueStatus(queue);
+      setRunError(null);
+    } catch (error) {
+      setRunError(errorMessage(error));
+    }
+    setLoading(false);
+    return 3000;
+  }, [baseUrl]);
+  const polling = usePolling(Boolean(project.repositoryPath), poll);
+  function refresh() { nextLoad.current = "all"; polling.refresh(); }
+  function refreshRuns() { nextLoad.current = "runs"; polling.refresh(); }
 
   return {
     tasks, setTasks, runs, setRuns, loading, taskError, runError,
-    queueStatus, setQueueStatus, baseBranch, setRefresh,
+    queueStatus, setQueueStatus, baseBranch, refresh, refreshRuns, mutate: polling.mutate,
   };
 }

@@ -36,7 +36,10 @@ import { formatRunDate, isActiveRun } from "@/modules/runs/run-presentation";
 import { cn } from "@/lib/utils";
 import { useSequenceOverview } from "@/modules/sequences/use-sequence-overview";
 import { legacyIndependentCheckpointFailure, sequencePresentationStatus, successfulSequencePrefixLength } from "@/modules/sequences/sequence-presentation";
-import { deleteBlockedRun, recoverBlockedRun } from "@/modules/runs/queue-client";
+import { useQueueActions } from "@/modules/runs/use-queue-actions";
+import { requireQueue, requireRun } from "@/modules/runs/run-response";
+import { requireSequence } from "./sequence-response";
+import type { RunQueueStatus } from "@/types/run-queue";
 
 export function ProjectSequencesView(props: { project: Project; onNavigateToSettings?: () => void }) {
   return <SequencesView key={`${props.project.id}:${props.project.repositoryPath}`} {...props} />;
@@ -53,17 +56,16 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
   const [mutating, setMutating] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [selectedStepRun, setSelectedStepRun] = useState<SequenceStepRun | null>(null);
-  const [recovering, setRecovering] = useState(false);
-  const [deletingBlocker, setDeletingBlocker] = useState(false);
-  const [queueError, setQueueError] = useState<string | null>(null);
   const [resumingPortableCheckpoint, setResumingPortableCheckpoint] = useState(false);
   const startingRef = useRef(false);
   const baseUrl = `/api/projects/${encodeURIComponent(project.id)}`;
   const {
-    sequences, setSequences, runs, stepRuns, queue, setQueue, loading,
+    sequences, setSequences, runs, setRuns, stepRuns, setStepRuns, queue, setQueue, loading,
     definitionError, runError, portableCheckpoint, portableCheckpointError,
-    setRefresh,
+    refreshRuns, mutate,
   } = useSequenceOverview(project, baseUrl, selectedSequenceId);
+  const queueActions = useQueueActions(mutate, setQueue);
+  const { recovering, deleting: deletingBlocker, error: queueError } = queueActions;
   const selectedSequence = sequences.find((sequence) => sequence.id === selectedSequenceId) ?? null;
 
   const stepRunsByRunId = useMemo(() => {
@@ -164,33 +166,42 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
 
   const selectedHasActiveRun = Boolean(activeSequenceRun);
 
+  function applySequence(value: SequenceDefinition | undefined, expectedId?: string) {
+    const sequence = requireSequence(value);
+    if (expectedId && sequence.id !== expectedId) throw new Error("Réponse de la Sequence invalide.");
+    setSequences(current => [...current.filter(item => item.id !== sequence.id), sequence].sort((a, b) => a.name.localeCompare(b.name)));
+    return sequence;
+  }
+
+  function applyRun(value: Run | undefined) {
+    const run = requireRun(value, project.id);
+    setRuns(current => [run, ...current.filter(item => item.id !== run.id)].sort((a, b) => b.queuedAt.localeCompare(a.queuedAt)).slice(0, 200));
+    // Run mutations omit stepRuns and the global queue.
+    refreshRuns();
+    return run;
+  }
+
   async function saveSequence(input: SequenceInput, id?: string) {
-    const data = await taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences${id ? `/${encodeURIComponent(id)}` : ""}`, {
-      method: id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
+    await mutate(() => taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences${id ? `/${encodeURIComponent(id)}` : ""}`, {
+      method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    }), data => {
+      const sequence = applySequence(data?.sequence, id);
+      if (!id) setSelectedSequenceId(sequence.id);
+      setSequenceEditor(undefined);
+      toast.success(id ? "Sequence configurée." : "Sequence créée. Ajoutez maintenant ses étapes.");
     });
-    if (!data?.sequence?.id) throw new Error("Réponse de sauvegarde invalide.");
-    setSequences((current) => [...current.filter((sequence) => sequence.id !== data.sequence.id), data.sequence]
-      .sort((a, b) => a.name.localeCompare(b.name)));
-    if (!id) setSelectedSequenceId(data.sequence.id);
-    setSequenceEditor(undefined);
-    setRefresh((value) => value + 1);
-    toast.success(id ? "Sequence configurée." : "Sequence créée. Ajoutez maintenant ses étapes.");
   }
 
   async function saveStep(input: SequenceStepInput, id?: string) {
     if (!selectedSequence) throw new Error("Aucune Sequence sélectionnée.");
     const url = `${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/steps${id ? `/${encodeURIComponent(id)}` : ""}`;
-    const data = await taskRequest<{ sequence: SequenceDefinition }>(url, {
-      method: id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
+    await mutate(() => taskRequest<{ sequence: SequenceDefinition }>(url, {
+      method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    }), data => {
+      applySequence(data?.sequence, selectedSequence.id);
+      setStepEditor(undefined);
+      toast.success(id ? "Étape enregistrée." : "Étape ajoutée à la Sequence.");
     });
-    setSequences((current) => current.map((sequence) => sequence.id === data.sequence.id ? data.sequence : sequence));
-    setStepEditor(undefined);
-    setRefresh((value) => value + 1);
-    toast.success(id ? "Étape enregistrée." : "Étape ajoutée à la Sequence.");
   }
 
   async function runSequence(sequenceId: string) {
@@ -198,14 +209,14 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     startingRef.current = true;
     setStarting(sequenceId);
     try {
-      const data = await taskRequest<{ run: Run }>(`${baseUrl}/sequences/${encodeURIComponent(sequenceId)}/runs`, { method: "POST" });
-      if (!data?.run?.id) throw new Error("Réponse du lancement invalide.");
-      setSelectedRunIdForView(data.run.id);
-      setSelectedRun(data.run);
-      setRefresh((value) => value + 1);
-      toast.success(data.run.resumeStage === "CONTINUING"
-        ? "Nouvelle étape ajoutée à la file : les étapes déjà réussies seront conservées."
-        : "Sequence ajoutée à la file.");
+      await mutate(() => taskRequest<{ run: Run }>(`${baseUrl}/sequences/${encodeURIComponent(sequenceId)}/runs`, { method: "POST" }), data => {
+        const run = applyRun(data?.run);
+        setSelectedRunIdForView(run.id);
+        setSelectedRun(run);
+        toast.success(run.resumeStage === "CONTINUING"
+          ? "Nouvelle étape ajoutée à la file : les étapes déjà réussies seront conservées."
+          : "Sequence ajoutée à la file.");
+      });
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { startingRef.current = false; setStarting(null); }
   }
@@ -214,14 +225,14 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (resumingRunId) return;
     setResumingRunId(runId);
     try {
-      const data = await taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/resume`, { method: "POST" });
-      if (!data?.run?.id) throw new Error("Réponse de reprise invalide.");
-      setSelectedRunIdForView(data.run.id);
-      setSelectedRun(data.run);
-      setRefresh((value) => value + 1);
-      toast.success(data.run.resumeStage === "VALIDATING"
-        ? "Reprise ajoutée à la file : Codex ne sera pas relancé pour l’étape déjà terminée."
-        : "Reprise ajoutée à la file : Codex continuera dans le worktree préservé, sans perdre les modifications existantes.");
+      await mutate(() => taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/resume`, { method: "POST" }), data => {
+        const run = applyRun(data?.run);
+        setSelectedRunIdForView(run.id);
+        setSelectedRun(run);
+        toast.success(run.resumeStage === "VALIDATING"
+          ? "Reprise ajoutée à la file : Codex ne sera pas relancé pour l’étape déjà terminée."
+          : "Reprise ajoutée à la file : Codex continuera dans le worktree préservé, sans perdre les modifications existantes.");
+      });
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setResumingRunId(null); }
   }
@@ -230,9 +241,10 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (pausingRunId) return;
     setPausingRunId(runId);
     try {
-      await taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" });
-      setRefresh((value) => value + 1);
-      toast.success("Pause demandée : Codex va s’arrêter et le worktree local sera conservé pour Reprendre.");
+      await mutate(() => taskRequest<{ run: Run }>(`${baseUrl}/runs/${encodeURIComponent(runId)}/pause`, { method: "POST" }), data => {
+        applyRun(data?.run);
+        toast.success("Pause demandée : Codex va s’arrêter et le worktree local sera conservé pour Reprendre.");
+      });
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setPausingRunId(null); }
   }
@@ -241,12 +253,12 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (!selectedSequence || resumingPortableCheckpoint || selectedHasActiveRun) return;
     setResumingPortableCheckpoint(true);
     try {
-      const data = await taskRequest<{ run: Run }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/checkpoint/resume`, { method: "POST" });
-      if (!data?.run?.id) throw new Error("Réponse de reprise portable invalide.");
-      setSelectedRunIdForView(data.run.id);
-      setSelectedRun(data.run);
-      setRefresh((value) => value + 1);
-      toast.success("Checkpoint portable ajouté à la file : les étapes certifiées ne seront pas relancées.");
+      await mutate(() => taskRequest<{ run: Run }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/checkpoint/resume`, { method: "POST" }), data => {
+        const run = applyRun(data?.run);
+        setSelectedRunIdForView(run.id);
+        setSelectedRun(run);
+        toast.success("Checkpoint portable ajouté à la file : les étapes certifiées ne seront pas relancées.");
+      });
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setResumingPortableCheckpoint(false); }
   }
@@ -259,12 +271,13 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
     setMutating(`order:${selectedSequence.steps[index].id}`);
     try {
-      const data = await taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/steps/order`, {
+      await mutate(() => taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/steps/order`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ orderedStepIds: reordered }),
+      }), data => {
+        applySequence(data?.sequence, selectedSequence.id);
       });
-      setSequences((current) => current.map((sequence) => sequence.id === data.sequence.id ? data.sequence : sequence));
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setMutating(null); }
   }
@@ -273,9 +286,10 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (!selectedSequence || mutating || !window.confirm(`Supprimer l’étape « ${step.name} » de cette Sequence ?`)) return;
     setMutating(`delete:${step.id}`);
     try {
-      const data = await taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/steps/${encodeURIComponent(step.id)}`, { method: "DELETE" });
-      setSequences((current) => current.map((sequence) => sequence.id === data.sequence.id ? data.sequence : sequence));
-      toast.success("Étape supprimée.");
+      await mutate(() => taskRequest<{ sequence: SequenceDefinition }>(`${baseUrl}/sequences/${encodeURIComponent(selectedSequence.id)}/steps/${encodeURIComponent(step.id)}`, { method: "DELETE" }), data => {
+        applySequence(data?.sequence, selectedSequence.id);
+        toast.success("Étape supprimée.");
+      });
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setMutating(null); }
   }
@@ -284,42 +298,30 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
     if (mutating || !window.confirm(`Supprimer la Sequence « ${sequence.name} » et toutes ses étapes ? Son historique de Runs restera consultable.`)) return;
     setMutating(`sequence:${sequence.id}`);
     try {
-      await taskRequest(`${baseUrl}/sequences/${encodeURIComponent(sequence.id)}`, { method: "DELETE" });
-      setSequences((current) => current.filter((candidate) => candidate.id !== sequence.id));
-      if (selectedSequenceId === sequence.id) {
-        setSelectedSequenceId(null);
-        setSelectedRunIdForView(null);
-      }
-      setRefresh((value) => value + 1);
-      toast.success("Sequence supprimée. Son historique est conservé.");
+      await mutate(() => taskRequest<{ success: boolean; queue: RunQueueStatus }>(`${baseUrl}/sequences/${encodeURIComponent(sequence.id)}`, { method: "DELETE" }), data => {
+        if (data?.success !== true) throw new Error("Réponse de suppression invalide.");
+        const freshQueue = requireQueue(data.queue);
+        setSequences(current => current.filter(candidate => candidate.id !== sequence.id));
+        setQueue(freshQueue);
+        if (selectedSequenceId === sequence.id) { setSelectedSequenceId(null); setSelectedRunIdForView(null); }
+        toast.success("Sequence supprimée. Son historique est conservé.");
+      });
     } catch (caught) { toast.error(errorMessage(caught)); }
     finally { setMutating(null); }
   }
 
   async function recoverQueue() {
-    const blocker = queue?.blocker;
-    if (!blocker || recovering || !window.confirm("Confirmez localement que l’ancienne exécution n’est plus active, puis reprenez la file globale.")) return;
-    setRecovering(true);
-    setQueueError(null);
-    try {
-      const data = await recoverBlockedRun(blocker);
-      if (data.queue) setQueue(data.queue);
-      setRefresh((value) => value + 1);
-    } catch (caught) { setQueueError(errorMessage(caught)); }
-    finally { setRecovering(false); }
+    await queueActions.execute("recover", queue, () => window.confirm("Confirmez localement que l’ancienne exécution n’est plus active, puis reprenez la file globale."), () => refreshRuns());
   }
 
   async function deleteQueueBlocker() {
-    const blocker = queue?.blocker;
-    if (!blocker || deletingBlocker || !window.confirm("Supprimer définitivement ce Run bloquant, son worktree et sa branche ? Tout travail non intégré sera perdu.")) return;
-    setDeletingBlocker(true);
-    setQueueError(null);
-    try {
-      const data = await deleteBlockedRun(blocker);
-      if (data.queue) setQueue(data.queue);
-      setRefresh((value) => value + 1);
-    } catch (caught) { setQueueError(errorMessage(caught)); }
-    finally { setDeletingBlocker(false); }
+    await queueActions.execute("delete", queue, () => window.confirm("Supprimer définitivement ce Run bloquant, son worktree et sa branche ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Tout travail non intégré sera perdu. Aucun travail ne sera créé ou relancé."), (_data, blockerId) => {
+      setRuns(current => current.filter(run => run.id !== blockerId));
+      setStepRuns(current => current.filter(step => step.runId !== blockerId));
+      if (selectedRun?.id === blockerId) { setSelectedRun(null); setSelectedStepRun(null); }
+      if (selectedRunIdForView === blockerId) setSelectedRunIdForView(null);
+      refreshRuns();
+    });
   }
 
   const lastRuns = new Map<string, Run>();
@@ -930,7 +932,7 @@ function SequencesView({ project, onNavigateToSettings }: { project: Project; on
         onRerun={sequences.some((sequence) => sequence.id === (selectedRun.sequenceId || selectedRun.taskId))
           ? () => void runSequence(selectedRun.sequenceId || selectedRun.taskId) : undefined}
         onResume={() => void resumeSequence(selectedRun.id)}
-        onClose={() => { setSelectedRun(null); setSelectedStepRun(null); setRefresh((value) => value + 1); }} />}
+        onClose={() => { setSelectedRun(null); setSelectedStepRun(null); refreshRuns(); }} />}
     </div>
   );
 }

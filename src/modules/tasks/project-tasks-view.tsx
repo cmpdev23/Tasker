@@ -44,7 +44,9 @@ import { formatRunDate, isRemovableRun, isRerunnableRun } from "@/modules/runs/r
 import { scheduleLabel } from "@/modules/tasks/schedule-presentation";
 import { useTaskOverview } from "@/modules/tasks/use-task-overview";
 import { taskState } from "@/modules/tasks/task-presentation";
-import { deleteBlockedRun, recoverBlockedRun } from "@/modules/runs/queue-client";
+import { useQueueActions } from "@/modules/runs/use-queue-actions";
+import { requireQueue, requireRun } from "@/modules/runs/run-response";
+import { requireTask } from "./task-response";
 
 export function ProjectTasksView(props: {
   project: Project;
@@ -70,8 +72,7 @@ function TasksView({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<string | null>(null);
   const [historyEnd, setHistoryEnd] = useState(false);
-  const [recoveringPipeline, setRecoveringPipeline] = useState(false);
-  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const historyRevision = useRef(0);
   const [editor, setEditor] = useState<TaskDefinition | null | undefined>(
     undefined,
   );
@@ -85,103 +86,62 @@ function TasksView({
   const baseUrl = `/api/projects/${encodeURIComponent(project.id)}`;
   const {
     tasks, setTasks, runs, setRuns, loading, taskError, runError,
-    queueStatus, setQueueStatus, baseBranch, setRefresh,
+    queueStatus, setQueueStatus, baseBranch, refresh, refreshRuns, mutate,
   } = useTaskOverview(project, baseUrl);
 
+  const queueActions = useQueueActions(mutate, setQueueStatus);
+
   async function saveTask(payload: TaskInput, id?: string) {
-    const data = await taskRequest<{ task: TaskDefinition }>(
-      baseUrl + "/tasks" + (id ? `/${encodeURIComponent(id)}` : ""),
-      {
-        method: id ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    );
-    if (!data?.task?.id)
-      throw new Error(
-        "Réponse de sauvegarde invalide. Vérifiez la liste avant de réessayer.",
-      );
-    setTasks((current) => [
-      ...current.filter((task) => task.id !== data.task.id),
-      data.task,
-    ]);
-    setEditor(undefined);
-    setRefresh((value) => value + 1);
-    toast.success("Tâche enregistrée.");
+    await mutate(() => taskRequest<{ task: TaskDefinition }>(baseUrl + "/tasks" + (id ? `/${encodeURIComponent(id)}` : ""), {
+      method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    }), data => {
+      const task = requireTask(data?.task);
+      if (id && task.id !== id) throw new Error("Réponse de sauvegarde invalide.");
+      setTasks(current => [...current.filter(item => item.id !== task.id), task].sort((a, b) => a.name.localeCompare(b.name)));
+      setEditor(undefined);
+      toast.success("Tâche enregistrée.");
+    });
   }
 
   async function removeTask() {
     if (!deleteTask?.id || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
+    setDeleting(true); setDeleteError(null);
     try {
-      const data = await taskRequest<{
-        success: boolean;
-        queue: RunQueueStatus;
-      }>(baseUrl + `/tasks/${encodeURIComponent(deleteTask.id)}`, {
-        method: "DELETE",
+      await mutate(() => taskRequest<{ success: boolean; queue: RunQueueStatus }>(baseUrl + `/tasks/${encodeURIComponent(deleteTask.id)}`, { method: "DELETE" }), data => {
+        if (data?.success !== true) throw new Error("Réponse de suppression invalide.");
+        const queue = requireQueue(data.queue);
+        setTasks(current => current.filter(task => task.id !== deleteTask.id));
+        setQueueStatus(queue);
+        setDeleteTask(null);
+        toast.success("Tâche supprimée.");
       });
-      setTasks((current) =>
-        current.filter((task) => task.id !== deleteTask.id),
-      );
-      if (data.queue) setQueueStatus(data.queue);
-      setDeleteTask(null);
-      setRefresh((value) => value + 1);
-      toast.success("Tâche supprimée.");
-    } catch (error) {
-      setDeleteError(errorMessage(error));
-    } finally {
-      setDeleting(false);
-    }
+    } catch (error) { setDeleteError(errorMessage(error)); }
+    finally { setDeleting(false); }
   }
 
   async function runNow(taskId: string) {
     if (startingRef.current) return;
-    startingRef.current = true;
-    setStarting(taskId);
+    startingRef.current = true; setStarting(taskId);
     try {
-      const data = await taskRequest<{ run: Run }>(
-        baseUrl + `/tasks/${encodeURIComponent(taskId)}/runs`,
-        { method: "POST" },
-      );
-      if (!data?.run?.id)
-        throw new Error(
-          "Réponse du lancement invalide. Vérifiez l’historique avant de relancer.",
-        );
-      setSelectedRun(data.run);
-      setRefresh((value) => value + 1);
-    } catch (error) {
-      toast.error(errorMessage(error));
-    } finally {
-      startingRef.current = false;
-      setStarting(null);
-    }
+      await mutate(() => taskRequest<{ run: Run }>(baseUrl + `/tasks/${encodeURIComponent(taskId)}/runs`, { method: "POST" }), data => {
+        const run = requireRun(data?.run, project.id);
+        setRuns(current => [run, ...current.filter(item => item.id !== run.id)].slice(0, 200));
+        setSelectedRun(run);
+        // Enqueue does not return the global queue; only history needs reloading.
+        refreshRuns();
+      });
+    } catch (error) { toast.error(errorMessage(error)); }
+    finally { startingRef.current = false; setStarting(null); }
   }
 
   async function recoverPipeline() {
-    const blocker = queueStatus?.blocker;
-    if (
-      !blocker ||
-      recoveringPipeline ||
-      !window.confirm(
-        "AgentTasker n’a plus d’identité de processus à vérifier automatiquement. Confirmez que l’ancienne exécution Codex n’est plus en cours, puis reprenez le pipeline.",
-      )
-    )
-      return;
-    setRecoveringPipeline(true);
-    setPipelineError(null);
-    try {
-      const data = await recoverBlockedRun(blocker);
-      if (data.queue) setQueueStatus(data.queue);
-      setRefresh((value) => value + 1);
-      toast.success(
-        "Pipeline débloqué. Les Runs en attente vont reprendre automatiquement.",
-      );
-    } catch (error) {
-      setPipelineError(errorMessage(error));
-    } finally {
-      setRecoveringPipeline(false);
-    }
+    if (removingRun) return;
+    await queueActions.execute("recover", queueStatus, () => window.confirm(
+      "AgentTasker n’a plus d’identité de processus à vérifier automatiquement. Confirmez que l’ancienne exécution Codex n’est plus en cours, puis reprenez le pipeline."
+    ), () => {
+      refreshRuns();
+      toast.success("Pipeline débloqué. Les Runs en attente vont reprendre automatiquement.");
+    });
   }
 
   async function removeRun(run: Run) {
@@ -195,27 +155,32 @@ function TasksView({
           : deleteArtifacts
             ? "Supprimer définitivement ce Run, son worktree et sa branche ? Tout travail non intégré sera perdu."
             : "Supprimer définitivement ce Run de l’historique ?";
-    if (removingRun || !window.confirm(label)) return;
+    if (removingRun || queueActions.recovering || queueActions.deleting || !window.confirm(label)) return;
+    historyRevision.current++;
     setRemovingRun(run.id);
     try {
       const params = new URLSearchParams();
       if (deleteArtifacts) params.set("deleteArtifacts", "true");
       if (confirmTermination) params.set("confirmTermination", "true");
       const query = params.size ? `?${params.toString()}` : "";
-      const data = await taskRequest<{ run: Run; queue: RunQueueStatus }>(
+      await mutate(() => taskRequest<{ run: Run; queue: RunQueueStatus }>(
         `${baseUrl}/runs/${encodeURIComponent(run.id)}${query}`,
         { method: "DELETE" },
-      );
-      setRuns((current) => current.filter((item) => item.id !== run.id));
-      setOlderRuns((current) => current.filter((item) => item.id !== run.id));
-      if (data.queue) setQueueStatus(data.queue);
-      if (selectedRun?.id === run.id) setSelectedRun(null);
-      setRefresh((value) => value + 1);
-      toast.success(
-        run.status === "QUEUED"
-          ? "Run retiré de la file."
-          : "Run supprimé de l’historique.",
-      );
+      ), data => {
+        if (data?.run?.id !== run.id) throw new Error("Réponse de suppression invalide.");
+        const queue = requireQueue(data.queue);
+        historyRevision.current++;
+        setRuns((current) => current.filter((item) => item.id !== run.id));
+        setOlderRuns((current) => current.filter((item) => item.id !== run.id));
+        setQueueStatus(queue);
+        if (selectedRun?.id === run.id) setSelectedRun(null);
+        refreshRuns();
+        toast.success(
+          run.status === "QUEUED"
+            ? "Run retiré de la file."
+            : "Run supprimé de l’historique.",
+        );
+      });
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -224,33 +189,19 @@ function TasksView({
   }
 
   async function removeBlockingRun() {
-    const blocker = queueStatus?.blocker;
-    if (
-      !blocker ||
-      !queueStatus.canRecover ||
-      removingRun ||
-      !window.confirm(
-        "Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucun travail ne sera créé ou relancé.",
-      )
-    )
-      return;
-    setRemovingRun(blocker.id);
-    setPipelineError(null);
-    try {
-      const data = await deleteBlockedRun(blocker);
-      setRuns((current) => current.filter((item) => item.id !== blocker.id));
-      setOlderRuns((current) =>
-        current.filter((item) => item.id !== blocker.id),
-      );
-      if (data.queue) setQueueStatus(data.queue);
-      if (selectedRun?.id === blocker.id) setSelectedRun(null);
-      setRefresh((value) => value + 1);
+    if (removingRun) return;
+    await queueActions.execute("delete", queueStatus, () => {
+      const confirmed = window.confirm("Supprimer définitivement ce Run bloquant ? En continuant, vous confirmez qu’aucun processus Codex de ce Run n’est encore actif. Son worktree, sa branche et tout travail non intégré seront supprimés. Aucun travail ne sera créé ou relancé.");
+      if (confirmed) historyRevision.current++;
+      return confirmed;
+    }, (_data, blockerId) => {
+      historyRevision.current++;
+      setRuns(current => current.filter(run => run.id !== blockerId));
+      setOlderRuns(current => current.filter(run => run.id !== blockerId));
+      if (selectedRun?.id === blockerId) setSelectedRun(null);
+      refreshRuns();
       toast.success("Run bloquant supprimé. Aucun travail n’a été relancé.");
-    } catch (error) {
-      setPipelineError(errorMessage(error));
-    } finally {
-      setRemovingRun(null);
-    }
+    });
   }
 
   const mergedRuns = new Map(
@@ -265,7 +216,8 @@ function TasksView({
     if (!lastRuns.has(run.taskId)) lastRuns.set(run.taskId, run);
 
   async function loadOlderRuns() {
-    if (loadingOlder || !orderedRuns.length) return;
+    if (loadingOlder || removingRun || queueActions.deleting || !orderedRuns.length) return;
+    const revision = historyRevision.current;
     setLoadingOlder(true);
     setOlderError(null);
     try {
@@ -276,6 +228,7 @@ function TasksView({
       const data = await taskRequest<{ runs: Run[] }>(
         `${baseUrl}/runs?before=${encodeURIComponent(before)}`,
       );
+      if (revision !== historyRevision.current) return;
       if (!Array.isArray(data?.runs))
         throw new Error("Réponse de l’historique invalide.");
       setOlderRuns((current) => [...current, ...data.runs]);
@@ -295,9 +248,9 @@ function TasksView({
         ) && (
           <QueueStatusPanel
             queue={queueStatus}
-            recovering={recoveringPipeline}
-            deleting={removingRun === queueStatus.blocker?.id}
-            error={pipelineError}
+            recovering={queueActions.recovering}
+            deleting={queueActions.deleting || removingRun === queueStatus.blocker?.id}
+            error={queueActions.error}
             onRecover={
               queueStatus.blocker ? () => void recoverPipeline() : undefined
             }
@@ -362,7 +315,7 @@ function TasksView({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setRefresh((value) => value + 1)}
+                    onClick={refresh}
                   >
                     Réessayer
                   </Button>
@@ -629,7 +582,7 @@ function TasksView({
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={loadingOlder}
+                  disabled={loadingOlder || !!removingRun || queueActions.deleting}
                   onClick={loadOlderRuns}
                 >
                   {loadingOlder && (
@@ -662,7 +615,7 @@ function TasksView({
           }
           onClose={() => {
             setSelectedRun(null);
-            setRefresh((value) => value + 1);
+            refreshRuns();
           }}
         />
       )}
